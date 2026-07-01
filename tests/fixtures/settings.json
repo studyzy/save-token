@@ -1,0 +1,30 @@
+{
+  "alwaysThinkingEnabled": false,
+  "enabledPlugins": {
+    "caveman@caveman": true,
+    "claude-hud@claude-hud": true,
+    "pdf@codebuddy-plugins-official": true,
+    "pptx@codebuddy-plugins-official": true,
+    "playwright-cli@codebuddy-plugins-official": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [{ "command": "rtk hook codebuddy", "type": "command" }],
+        "matcher": "Bash"
+      },
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codebuddy/hooks/cbm-code-discovery-gate",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "model": "deepseek-v4-pro",
+  "reasoningEffort": "high"
+}

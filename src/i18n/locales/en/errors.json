@@ -1,0 +1,17 @@
+{
+  "generalError": "Error",
+  "stackTrace": "Stack",
+  "codebuddyNotFound": "CodeBuddy not detected. Please install CodeBuddy CLI 2.x+ first.",
+  "configParseError": "Config file parse failed: {{file}}",
+  "headlessTimeout": "codebuddy -p call timed out",
+  "headlessFailed": "codebuddy -p call failed, falling back to file scan only",
+  "lockFileExists": "Another st optimize instance is running, refusing concurrent execution",
+  "noBackupFound": "No backup records found",
+  "backupNotFound": "Backup with specified timestamp not found: {{timestamp}}",
+  "toolInstallFailed": "Tool install failed: {{tool}}",
+  "configChangeFailed": "Config change failed: {{file}}",
+  "rollbackSuccess": "Restored from backup",
+  "rollbackFailed": "Rollback failed",
+  "invalidFormat": "Invalid output format: {{format}}",
+  "suggestionNotFound": "Suggestion not found: {{id}}"
+}

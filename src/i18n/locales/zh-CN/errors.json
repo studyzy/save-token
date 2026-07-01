@@ -1,0 +1,17 @@
+{
+  "generalError": "发生错误",
+  "stackTrace": "堆栈",
+  "codebuddyNotFound": "未检测到 CodeBuddy，请先安装 CodeBuddy CLI 2.x+",
+  "configParseError": "配置文件解析失败: {{file}}",
+  "headlessTimeout": "codebuddy -p 调用超时",
+  "headlessFailed": "codebuddy -p 调用失败，降级为仅文件扫描",
+  "lockFileExists": "检测到另一个 st optimize 实例正在运行，拒绝并发执行",
+  "noBackupFound": "未找到备份记录",
+  "backupNotFound": "指定时间戳的备份不存在: {{timestamp}}",
+  "toolInstallFailed": "工具安装失败: {{tool}}",
+  "configChangeFailed": "配置修改失败: {{file}}",
+  "rollbackSuccess": "已从备份恢复",
+  "rollbackFailed": "回滚失败",
+  "invalidFormat": "无效的输出格式: {{format}}",
+  "suggestionNotFound": "未找到指定建议: {{id}}"
+}
