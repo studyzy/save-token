@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { applyConfigChange } from '../../src/executors/codebuddy-configurator'
-import { exists, readFile, writeFile, removeFile, ensureDir, readDir } from '../../src/utils/fs-operations'
+import {
+  exists,
+  readFile,
+  writeFile,
+  removeFile,
+  ensureDir,
+  readDir,
+} from '../../src/utils/fs-operations'
 import type { OptimizationSuggestion } from '../../src/types'
 
 const TMP = '/tmp/st-test-config'
@@ -51,6 +58,7 @@ describe('codebuddy-configurator', () => {
     const suggestion: OptimizationSuggestion = {
       id: 'test',
       type: 'config_change',
+      wasteCategory: 'structural',
       target: 'headroom',
       reason: '',
       estimatedSavingTokens: 0,
@@ -62,7 +70,10 @@ describe('codebuddy-configurator', () => {
     }
     const result = await applyConfigChange(suggestion)
     expect(result.success).toBe(true)
-    const config = JSON.parse(readFile(`${TMP}/.codebuddy/.mcp.json`))
+    const config = JSON.parse(readFile(`${TMP}/.codebuddy/.mcp.json`)) as {
+      mcpServers: Record<string, { defer_loading?: boolean }>
+      disabledMcpServers: string[]
+    }
     expect(config.mcpServers.headroom).toBeUndefined()
     expect(config.disabledMcpServers).toContain('headroom')
   })
@@ -71,6 +82,7 @@ describe('codebuddy-configurator', () => {
     const suggestion: OptimizationSuggestion = {
       id: 'test',
       type: 'config_change',
+      wasteCategory: 'structural',
       target: 'serena',
       reason: '',
       estimatedSavingTokens: 0,
@@ -87,7 +99,10 @@ describe('codebuddy-configurator', () => {
     }
     const result = await applyConfigChange(suggestion)
     expect(result.success).toBe(true)
-    const config = JSON.parse(readFile(`${TMP}/.codebuddy/.mcp.json`))
+    const config = JSON.parse(readFile(`${TMP}/.codebuddy/.mcp.json`)) as {
+      mcpServers: Record<string, { defer_loading?: boolean }>
+      disabledMcpServers: string[]
+    }
     expect(config.mcpServers.serena.defer_loading).toBe(true)
   })
 
@@ -95,6 +110,7 @@ describe('codebuddy-configurator', () => {
     const suggestion: OptimizationSuggestion = {
       id: 'test',
       type: 'config_change',
+      wasteCategory: 'structural',
       target: 'pptx@codebuddy-plugins-official',
       reason: '',
       estimatedSavingTokens: 0,
@@ -106,7 +122,10 @@ describe('codebuddy-configurator', () => {
     }
     const result = await applyConfigChange(suggestion)
     expect(result.success).toBe(true)
-    const settings = JSON.parse(readFile(`${TMP}/.codebuddy/settings.json`))
+    const settings = JSON.parse(readFile(`${TMP}/.codebuddy/settings.json`)) as {
+      enabledPlugins: Record<string, boolean>
+      deferToolLoading: boolean
+    }
     expect(settings.enabledPlugins['pptx@codebuddy-plugins-official']).toBe(false)
   })
 
@@ -114,6 +133,7 @@ describe('codebuddy-configurator', () => {
     const suggestion: OptimizationSuggestion = {
       id: 'test',
       type: 'config_change',
+      wasteCategory: 'structural',
       target: 'deferToolLoading',
       reason: '',
       estimatedSavingTokens: 0,
@@ -125,7 +145,10 @@ describe('codebuddy-configurator', () => {
     }
     const result = await applyConfigChange(suggestion)
     expect(result.success).toBe(true)
-    const settings = JSON.parse(readFile(`${TMP}/.codebuddy/settings.json`))
+    const settings = JSON.parse(readFile(`${TMP}/.codebuddy/settings.json`)) as {
+      enabledPlugins: Record<string, boolean>
+      deferToolLoading: boolean
+    }
     expect(settings.deferToolLoading).toBe(true)
   })
 
@@ -133,6 +156,7 @@ describe('codebuddy-configurator', () => {
     const suggestion: OptimizationSuggestion = {
       id: 'test',
       type: 'config_change',
+      wasteCategory: 'structural',
       target: 'unknown',
       reason: '',
       estimatedSavingTokens: 0,

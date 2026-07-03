@@ -7,7 +7,7 @@ export type Platform = 'windows' | 'macos' | 'linux'
 
 export type OutputFormat = 'terminal' | 'json' | 'md'
 
-export type ToolId = 'rtk' | 'caveman' | 'headroom' | 'lean-ctx' | 'graphify'
+export type ToolId = 'rtk' | 'caveman' | 'headroom' | 'lean-ctx' | 'graphify' | 'ponytail'
 
 export type SuggestionType = 'install_tool' | 'config_change' | 'habit_suggestion'
 
@@ -19,6 +19,7 @@ export type ActionType =
   | 'install_headroom'
   | 'install_lean_ctx'
   | 'install_graphify'
+  | 'install_ponytail'
   | 'disable_mcp'
   | 'enable_mcp_defer_loading'
   | 'disable_plugin'
@@ -26,6 +27,8 @@ export type ActionType =
   | 'enable_defer_tool_loading'
   | 'simplify_codebuddy_md'
   | 'cleanup_history'
+
+export type DataSource = 'proxy' | 'headless' | 'fs-only'
 
 export interface ContextItem {
   name: string
@@ -37,6 +40,7 @@ export interface ContextItem {
     | 'mcp-tools'
     | 'hook'
     | 'message'
+    | 'tool-definitions'
   estimatedTokens: number
   source: string
 }
@@ -72,6 +76,17 @@ export interface SkillEntry {
   fileSizeBytes: number
   estimatedTokens: number
   loaded: boolean | null
+  /** Set when the same skill name appears from multiple sources (user + marketplace). */
+  duplicateSource?: SkillSource
+}
+
+export interface RuleEntry {
+  name: string
+  path: string
+  /** true when the rule has no paths: frontmatter — loaded in every session. */
+  alwaysLoaded: boolean
+  fileSizeBytes: number
+  estimatedTokens: number
 }
 
 export interface PluginEntry {
@@ -118,10 +133,20 @@ export interface DiagnosisReport {
   skillList: SkillEntry[]
   pluginList: PluginEntry[]
   hookList: HookEntry[]
+  ruleList: RuleEntry[]
   configFiles: ConfigFileSummary[]
   toolDetection: ToolDetection[]
   headlessAvailable: boolean
+  dataSource: DataSource
   warnings: string[]
+  /** Only populated when dataSource is 'proxy'. Contains parsed proxy details. */
+  proxyDetails?: {
+    model: string
+    toolDefinitions: ProxyToolDef[]
+    messageBreakdown: ProxyMessageBlock[]
+    skillReferences: string[]
+    mcpReferences: string[]
+  }
 }
 
 export interface ActionPayload {
@@ -135,9 +160,12 @@ export interface ActionPayload {
   diff?: string
 }
 
+export type WasteCategory = 'structural' | 'runtime' | 'behavioral'
+
 export interface OptimizationSuggestion {
   id: string
   type: SuggestionType
+  wasteCategory: WasteCategory
   target: string
   reason: string
   estimatedSavingTokens: number
@@ -235,4 +263,50 @@ export const MCP_CLI_ALTERNATIVES: Record<string, string> = {
   notion: 'notion-cli',
   linear: 'linear-cli',
   jira: 'jira-cli',
+}
+
+export interface ProxyDiagnosisData {
+  messagesByRole: Record<string, { count: number; estimatedTokens: number }>
+  messageBreakdown: ProxyMessageBlock[]
+  totalEstimatedTokens: number
+  toolDefinitions: ProxyToolDef[]
+  toolDefinitionsTokens: number
+  builtinToolCount: number
+  mcpToolCount: number
+  systemPromptTokens: number
+  memoryTokens: number
+  rulesTokens: number
+  skillReferences: string[]
+  mcpReferences: string[]
+  model: string
+}
+
+export interface ProxyMessageBlock {
+  role: string
+  index: number
+  contentType: string
+  estimatedTokens: number
+  charLength: number
+  snippet: string
+}
+
+export interface ProxyToolDef {
+  name: string
+  category: 'builtin' | 'mcp' | 'deferred'
+  estimatedTokens: number
+  description: string
+}
+
+export interface ProxyCollectResult {
+  ok: boolean
+  error?: string
+  rawBody: unknown
+  parsed: ProxyDiagnosisData | null
+}
+
+export interface TraceOptions {
+  port?: number
+  upstream?: string
+  traceDir?: string
+  lang?: 'zh-CN' | 'en'
 }

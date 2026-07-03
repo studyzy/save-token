@@ -9,6 +9,21 @@ import { exec } from 'tinyexec'
  */
 export async function installTool(toolId: ToolId): Promise<ToolInstallResult> {
   const spec = TOOL_SPECS[toolId]
+
+  // ponytail is installed via codebuddy plugin, not a system binary
+  if (toolId === 'ponytail') {
+    const alreadyInstalled = await checkPluginInstalled('ponytail')
+    if (alreadyInstalled) {
+      return {
+        toolId,
+        success: true,
+        configChanges: [],
+        installOutput: 'already installed',
+      }
+    }
+    return installPlugin(toolId, spec)
+  }
+
   const alreadyInstalled = await commandExists(toolId)
   if (alreadyInstalled) {
     return {
@@ -19,6 +34,13 @@ export async function installTool(toolId: ToolId): Promise<ToolInstallResult> {
     }
   }
 
+  return installWithSpec(toolId, spec)
+}
+
+async function installWithSpec(
+  toolId: ToolId,
+  spec: { installCommand: string; verifyCommand: string; configCommand: string },
+): Promise<ToolInstallResult> {
   try {
     const installRes = await runShell(spec.installCommand)
     if (!installRes.ok) {
@@ -70,6 +92,54 @@ export async function installTool(toolId: ToolId): Promise<ToolInstallResult> {
   }
 }
 
+async function installPlugin(
+  toolId: ToolId,
+  spec: { installCommand: string; verifyCommand: string; configCommand: string },
+): Promise<ToolInstallResult> {
+  try {
+    const installRes = await runShell(spec.installCommand)
+    if (!installRes.ok) {
+      return {
+        toolId,
+        success: false,
+        error: installRes.stderr || installRes.error,
+        configChanges: [],
+      }
+    }
+
+    // Plugin install may need a moment to sync
+    const verifyRes = await runShell(spec.verifyCommand)
+    if (!verifyRes.ok) {
+      return {
+        toolId,
+        success: false,
+        error: `verify failed: ${verifyRes.stderr}`,
+        installOutput: installRes.stdout,
+        configChanges: [],
+      }
+    }
+
+    return {
+      toolId,
+      success: true,
+      installOutput: installRes.stdout,
+      configChanges: [],
+    }
+  } catch (error) {
+    return {
+      toolId,
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      configChanges: [],
+    }
+  }
+}
+
+async function checkPluginInstalled(pluginId: string): Promise<boolean> {
+  const res = await runShell(`ls ~/.codebuddy/plugins/marketplaces/${pluginId}/`)
+  return res.ok
+}
+
 interface ShellResult {
   ok: boolean
   stdout: string
@@ -80,7 +150,7 @@ interface ShellResult {
 async function runShell(command: string): Promise<ShellResult> {
   try {
     const parts = parseShellCommand(command)
-    const bin = parts[0]!
+    const bin = parts[0]
     const args = parts.slice(1)
     const res = await exec(bin, args, { nodeOptions: { stdio: 'pipe' } })
     return {
@@ -106,7 +176,7 @@ function parseShellCommand(command: string): string[] {
   if (command.includes('&&')) {
     // For chained commands we only return the first; callers should split externally.
     // In practice the install commands here are simple, so split first segment.
-    return command.split('&&')[0]!.trim().split(/\s+/)
+    return command.split('&&')[0].trim().split(/\s+/)
   }
   return command.trim().split(/\s+/)
 }

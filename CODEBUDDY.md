@@ -1,0 +1,106 @@
+# CODEBUDDY.md
+
+This file provides guidance to CodeBuddy Code when working with code in this repository.
+
+## 项目概述
+
+`save-token` 是 CodeBuddy Token 占用诊断与优化 CLI 工具。通过文件系统扫描 + `codebuddy -p` 无头模式自报，诊断 Token 占用、生成优化建议、自动安装省 Token 工具并优化配置。对外暴露的命令是 `st`。
+
+## 开发命令
+
+```bash
+# 开发模式运行（直接执行 TypeScript 源码）
+pnpm dev                          # 等效 tsx ./src/cli.ts
+pnpm dev -- diagnose              # 传递子命令参数
+
+# 构建
+pnpm build                        # unbuild，输出到 dist/，同时复制 i18n JSON 到 dist/i18n/
+
+# 类型检查
+pnpm typecheck                    # tsc --noEmit
+
+# Lint
+pnpm lint                         # eslint
+pnpm lint:fix                     # eslint --fix
+
+# 测试
+pnpm test                         # vitest（交互模式）
+pnpm test:run                     # vitest run（单次运行）
+pnpm test:coverage                # vitest run --coverage（含覆盖率报告）
+npx vitest run tests/commands/diagnose.test.ts  # 运行单个测试文件
+npx vitest run -t "test name"                    # 按名称筛选运行单个测试
+
+# 本地运行已构建的 CLI
+pnpm start                        # node bin/st.mjs
+```
+
+## 架构总览
+
+### 入口与 CLI 层
+
+- `src/cli.ts` — CLI 入口，使用 `cac` 注册 `st` 命令
+- `src/cli-setup.ts` — 注册 diagnose / analyze / optimize / rollback / report 五个子命令，在注册前先调用 `initI18n(lang)`，语言由环境变量 `ST_LANG` 控制（默认 `zh-CN`）
+
+### 适配器模式（Adapter）
+
+- `src/adapters/platform-adapter.ts` — `PlatformAdapter` 接口定义：检测安装、获取配置路径、构建 headless 命令、解析输出。目前仅有 CodeBuddy 实现
+- `src/adapters/codebuddy-adapter.ts` — 唯一可用的实现，返回 `~/.codebuddy/` 下所有配置路径，headless 命令格式为 `codebuddy -p <prompt> --output-format json -y --max-turns 2`
+- `src/adapters/claude-code-adapter.ts` 和 `src/adapters/codex-adapter.ts` — 空桩，未实现
+
+### 命令层（Commands）
+
+5 个命令，都通过 `CodeBuddyAdapter` 获取平台信息：
+
+| 命令 | 文件 | 核心逻辑 |
+|------|------|----------|
+| `st diagnose` | `src/commands/diagnose.ts` | 文件扫描 + headless 探测 → 合并数据 → `DiagnosisReport` |
+| `st analyze` | `src/commands/analyze.ts` | 先 diagnose → 规则引擎生成建议 → 计算总节省 |
+| `st optimize` | `src/commands/optimize.ts` | diagnose → 生成建议 → dry-run 预览 / `--apply` 执行 |
+| `st rollback` | `src/commands/rollback.ts` | 从 `~/.codebuddy/.st-backup-*.json` 恢复 |
+| `st report` | `src/commands/report.ts` | diagnose + analyze → 写入 Markdown/JSON 报告文件 |
+
+`diagnose` 的流程是先 `scanFilesystem()` 收集文件系统数据（MCP 配置、Skills、插件、Hooks、配置文件），再通过 `probe()` 调用 `codebuddy -p` 让模型自报实际加载的 MCP 和 Skill 列表，最后用 `mergeMcpLists()` / `mergeSkillLists()` 合并两套数据。
+
+### 数据采集层（Collectors）
+
+- `src/collectors/fs-collector.ts` — `scanFilesystem(adapter)` 扫描 `~/.codebuddy/` 目录，返回 `FsCollectResult`（MCP 列表、Skill 列表、插件、Hooks、配置文件摘要）。Skill 扫描覆盖 user/project/marketplace/commands 四种来源
+- `src/collectors/headless-collector.ts` — `probe(adapter, prompt, schema)` 调用 `codebuddy -p` 获取 AI 自报数据。`probeAll()` 支持并行多探针
+- `src/collectors/token-estimator.ts` — Token 估算：`estimate(content)` = `Math.ceil(content.length / 4)`；MCP 按 200 token/工具估算
+
+### 分析层（Analyzers）
+
+- `src/analyzers/rules.ts` — 规则数据：5 个工具的安装命令/验证命令/配置命令/预估节省、阈值常量（MCP 数警告=5、Skill 数警告=10、CODEBUDDY.md 行数警告=200、历史文件大小警告=50MB）
+- `src/analyzers/suggestion-engine.ts` — `generateSuggestions(report)` 遍历诊断报告，对未安装的工具建议安装、对可替换的 MCP 建议禁用、对低频插件/过多 Skill/超大 CODEBUDDY.md 等给出配置优化建议
+
+### 执行层（Executors）
+
+- `src/executors/tool-installer.ts` — `installTool(toolId)` 通过 `tinyexec` 执行安装命令，支持 install → verify → config 三步流程
+- `src/executors/codebuddy-configurator.ts` — `applyConfigChange(suggestion)` 根据 actionType 操作 `~/.codebuddy/.mcp.json`（禁用 MCP/设置 defer_loading）和 `settings.json`（禁用插件/设置 deferToolLoading）
+- `src/executors/backup-manager.ts` — 优化前备份 MCP/Settings/CODEBUDDY.md 到 `.bak.<timestamp>`，支持列表/按时间戳恢复/恢复最新
+- `src/executors/diff-generator.ts` — diff 生成
+
+### 工具层（Utils）
+
+- `src/utils/platform.ts` — 平台检测（windows/macos/linux/Termux）、`commandExists()`、`getCodebuddyDir()` 等
+- `src/utils/fs-operations.ts` — 同步文件操作封装（read/write/copy/remove/ensureDir），所有操作包裹 `FileSystemError`
+- `src/utils/output.ts` — 格式化输出：`printDiagnosisReport()`、`printOptimizePreview()`、`printSuggestions()`，支持 terminal/json/md 三种格式
+- `src/utils/error-handler.ts` — `handleExitPromptError()` 和 `handleGeneralError()` 统一错误处理
+- `src/utils/prompt-templates.ts` — `codebuddy -p` 探针的中文 prompt 模板和 JSON Schema（MCP 列表、Skill 列表、上下文占用、工具列表）
+
+### 类型定义
+
+- `src/types/index.ts` — 所有核心类型：`DiagnosisReport`、`OptimizationSuggestion`、`ActionType`、`McpEntry`、`SkillEntry`、`PluginEntry`、`HookEntry`、`BackupRecord` 等。还包含 `MCP_CLI_ALTERNATIVES` 和 `LOW_FREQUENCY_PLUGINS` 两组运行时映射表
+
+### 国际化
+
+- `src/i18n/index.ts` — 基于 `i18next` + `i18next-fs-backend`，命名空间 `common` / `errors`，支持 `zh-CN` / `en`。构建时通过 `build.config.ts` 的 hook 将 JSON 文件复制到 `dist/i18n/`
+
+## 关键设计约定
+
+- **入口文件**：构建入口是 `src/cli`（`build.config.ts` 中 `entries: ['src/cli']`），输出到 `dist/cli.mjs`
+- **二进制命令**：`st` 指向 `bin/st.mjs`，该文件在 dist 中
+- **配置路径**：所有 CodeBuddy 配置路径硬编码在 `CodeBuddyAdapter.getConfigPaths()` 中，基于 `~/.codebuddy`
+- **Headless 探测**：核心机制是让 `codebuddy -p` 自己汇报当前环境状态，而非解析 CodeBuddy 内部格式
+- **Token 估算**：统一使用 `content.length / 4` 近似
+- **优化前备份**：所有 `st optimize --apply` 操作在执行前会自动备份被修改的配置文件
+- **路径别名**：`@` → `./src`（vitest.config.ts 和测试中使用）

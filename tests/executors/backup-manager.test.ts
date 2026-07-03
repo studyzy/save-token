@@ -11,8 +11,20 @@ vi.mock('../../src/utils/platform', () => ({
   isWindows: vi.fn(() => false),
 }))
 
-import { backup, listBackups, restoreLatest, restoreByTimestamp } from '../../src/executors/backup-manager'
-import { exists, readFile, writeFile, removeFile, ensureDir, readDir } from '../../src/utils/fs-operations'
+import {
+  backup,
+  listBackups,
+  restoreLatest,
+  restoreByTimestamp,
+} from '../../src/executors/backup-manager'
+import {
+  exists,
+  readFile,
+  writeFile,
+  removeFile,
+  ensureDir,
+  readDir,
+} from '../../src/utils/fs-operations'
 
 const SAMPLE_REPORT = {
   scanTimestamp: '',
@@ -23,9 +35,11 @@ const SAMPLE_REPORT = {
   skillList: [],
   pluginList: [],
   hookList: [],
+  ruleList: [],
   configFiles: [],
   toolDetection: [],
   headlessAvailable: false,
+  dataSource: 'fs-only' as const,
   warnings: [],
 }
 
@@ -58,12 +72,12 @@ describe('backup-manager', () => {
 
   it('should list backups sorted desc', async () => {
     const ts1 = await backup(SAMPLE_REPORT)
-    await new Promise(r => setTimeout(r, 1100))
+    await new Promise((r) => setTimeout(r, 1100))
     const ts2 = await backup(SAMPLE_REPORT)
     const backups = await listBackups()
     expect(backups.length).toBeGreaterThanOrEqual(2)
-    expect(backups[0]!.timestamp).toBe(ts2)
-    expect(backups[1]!.timestamp).toBe(ts1)
+    expect(backups[0].timestamp).toBe(ts2)
+    expect(backups[1].timestamp).toBe(ts1)
   })
 
   it('should restore latest backup', async () => {

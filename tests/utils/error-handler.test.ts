@@ -38,6 +38,7 @@ describe('error-handler', () => {
     })
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
+    // eslint-disable-next-line @typescript-eslint/require-await
     const fn = withErrorHandler(async () => {
       throw new Error('boom')
     })

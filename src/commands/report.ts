@@ -10,7 +10,7 @@ import dayjs from 'dayjs'
 export async function report(options: ReportOptions): Promise<void> {
   try {
     const adapter = new CodeBuddyAdapter()
-    const report = await runDiagnose(adapter, { noHeadless: options.noHeadless ?? false })
+    const { report } = await runDiagnose(adapter, { noHeadless: options.noHeadless ?? false })
     const suggestions = generateSuggestions(report)
     const totalSaving = suggestions.reduce((s, x) => s + x.estimatedSavingTokens, 0)
     const totalPercent = report.contextOverview.totalEstimatedTokens

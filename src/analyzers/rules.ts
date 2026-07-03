@@ -18,6 +18,7 @@ export const TOOL_SAVINGS: Record<ToolId, number> = {
   headroom: 6200,
   'lean-ctx': 4200,
   graphify: 5400,
+  ponytail: 8000,
 }
 
 export const TOOL_REASONS: Record<ToolId, string> = {
@@ -26,6 +27,7 @@ export const TOOL_REASONS: Record<ToolId, string> = {
   headroom: '所有进上下文内容压缩 47-92%',
   'lean-ctx': '读取时筛选 + 跨会话记忆 60-90%',
   graphify: '代码图谱减少盲搜，比读文件少 71.5x Token',
+  ponytail: '决策阶梯减少过度工程，代码少 54% + 成本降 20-75%',
 }
 
 export const TOOL_SPECS: Record<ToolId, ToolInstallSpec> = {
@@ -64,6 +66,13 @@ export const TOOL_SPECS: Record<ToolId, ToolInstallSpec> = {
     verifyCommand: 'graphify --version',
     configCommand: 'graphify install --platform codebuddy',
     recommendedSaving: '71.5x 代码图谱',
+  },
+  ponytail: {
+    id: 'ponytail',
+    installCommand: 'codebuddy plugin marketplace add https://github.com/studyzy/ponytail',
+    verifyCommand: 'ls ~/.codebuddy/plugins/marketplaces/ponytail/',
+    configCommand: '',
+    recommendedSaving: '54% 代码量 + 20-75% 成本',
   },
 }
 

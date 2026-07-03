@@ -22,7 +22,7 @@ describe('prompt-templates', () => {
   })
 
   it('should have required fields in MCP schema', () => {
-    const props = (MCP_LIST_SCHEMA.items as any).properties
+    const props = MCP_LIST_SCHEMA.items.properties
     expect(props.name).toBeDefined()
     expect(props.status).toBeDefined()
     expect(props.toolsCount).toBeDefined()
@@ -30,7 +30,7 @@ describe('prompt-templates', () => {
   })
 
   it('should have required fields in Skill schema', () => {
-    const props = (SKILL_LIST_SCHEMA.items as any).properties
+    const props = SKILL_LIST_SCHEMA.items.properties
     expect(props.name).toBeDefined()
     expect(props.source).toBeDefined()
     expect(props.description).toBeDefined()

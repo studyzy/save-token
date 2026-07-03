@@ -10,6 +10,7 @@ import { exec } from 'tinyexec'
 
 const mockAdapter: PlatformAdapter = {
   name: 'mock',
+  // eslint-disable-next-line @typescript-eslint/require-await
   async detectInstall() {
     return true
   },
@@ -33,7 +34,7 @@ const mockAdapter: PlatformAdapter = {
   },
   parseHeadlessOutput(raw: string) {
     try {
-      return JSON.parse(raw)
+      return JSON.parse(raw) as Record<string, unknown>
     } catch {
       return null
     }
@@ -50,7 +51,7 @@ describe('headless-collector', () => {
       stdout: '{"key":"value"}',
       stderr: '',
       exitCode: 0,
-    } as any)
+    })
 
     const result = await probe(mockAdapter, 'test prompt')
 
@@ -64,7 +65,7 @@ describe('headless-collector', () => {
       stdout: '',
       stderr: 'error',
       exitCode: 1,
-    } as any)
+    })
 
     const result = await probe(mockAdapter, 'test prompt')
 
@@ -86,7 +87,7 @@ describe('headless-collector', () => {
       stdout: 'not json',
       stderr: '',
       exitCode: 0,
-    } as any)
+    })
 
     const result = await probe(mockAdapter, 'test prompt')
 

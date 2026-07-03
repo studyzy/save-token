@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import type { CAC } from 'cac'
 import { initI18n } from './i18n'
 import { diagnose } from './commands/diagnose'
@@ -5,6 +6,7 @@ import { analyze } from './commands/analyze'
 import { optimize } from './commands/optimize'
 import { rollback } from './commands/rollback'
 import { report } from './commands/report'
+import { trace } from './commands/trace'
 
 export async function setupCommands(cli: CAC): Promise<void> {
   const lang = (process.env.ST_LANG as 'zh-CN' | 'en' | undefined) ?? 'zh-CN'
@@ -66,6 +68,21 @@ export async function setupCommands(cli: CAC): Promise<void> {
     .option('--output <path>', '输出文件路径')
     .option('--no-headless', '诊断阶段跳过 codebuddy -p')
     .action(async (options) => {
-      await report({ format: options.format, output: options.output, noHeadless: options.headless === false })
+      await report({
+        format: options.format,
+        output: options.output,
+        noHeadless: options.headless === false,
+      })
+    })
+
+  cli
+    .command('trace', '启动 HTTP 代理并记录 CodeBuddy 所有请求/响应到本地')
+    .option('--port <number>', '监听端口（默认随机）')
+    .option('--upstream <url>', '上游 API 地址（默认读 CODEBUDDY_API_BASE 环境变量）')
+    .action(async (options) => {
+      await trace({
+        port: options.port ? Number(options.port) : undefined,
+        upstream: options.upstream,
+      })
     })
 }

@@ -18,7 +18,7 @@ const LOCK_FILE = `${getCodebuddyDir()}/.st.lock`
 export async function optimize(options: OptimizeOptions): Promise<void> {
   try {
     const adapter = new CodeBuddyAdapter()
-    const report = await runDiagnose(adapter, { noHeadless: false })
+    const { report } = await runDiagnose(adapter, { noHeadless: false })
     const allSuggestions = generateSuggestions(report)
     const suggestions = filterSuggestions(allSuggestions, options)
 
@@ -66,14 +66,17 @@ function filterSuggestions(
   options: OptimizeOptions,
 ): OptimizationSuggestion[] {
   if (options.tool) {
-    return all.filter(s => s.actionPayload.installCommand?.includes(options.tool!) || s.target === options.tool)
+    return all.filter(
+      (s) => s.actionPayload.installCommand?.includes(options.tool!) || s.target === options.tool,
+    )
   }
   if (options.suggestion) {
-    return all.filter(s => s.id === options.suggestion)
+    return all.filter((s) => s.id === options.suggestion)
   }
   return all
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await
 async function confirmWithUser(_suggestions: OptimizationSuggestion[]): Promise<boolean> {
   return true
 }
@@ -98,7 +101,12 @@ async function executeSuggestion(
   }
 }
 
-function printResults(results: Array<{ suggestion: OptimizationSuggestion; result: { success: boolean; error?: string } }>): void {
+function printResults(
+  results: Array<{
+    suggestion: OptimizationSuggestion
+    result: { success: boolean; error?: string }
+  }>,
+): void {
   for (const r of results) {
     const mark = r.result.success ? ansis.green('✓') : ansis.red('✗')
     console.log(`${mark} ${r.suggestion.target}`)
@@ -110,13 +118,20 @@ function printResults(results: Array<{ suggestion: OptimizationSuggestion; resul
 
 function writeBackupRecord(
   timestamp: string,
-  results: Array<{ suggestion: OptimizationSuggestion; result: { success: boolean; error?: string } }>,
+  results: Array<{
+    suggestion: OptimizationSuggestion
+    result: { success: boolean; error?: string }
+  }>,
 ): void {
   const record = {
     timestamp,
     operation: 'optimize' as const,
     files: [],
-    results: results.map(r => ({ target: r.suggestion.target, success: r.result.success, error: r.result.error })),
+    results: results.map((r) => ({
+      target: r.suggestion.target,
+      success: r.result.success,
+      error: r.result.error,
+    })),
   }
   const recordPath = `${getCodebuddyDir()}/.st-backup-${timestamp}.json`
   writeFile(recordPath, JSON.stringify(record, null, 2))

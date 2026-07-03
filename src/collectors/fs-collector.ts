@@ -3,6 +3,7 @@ import type {
   HookEntry,
   McpEntry,
   PluginEntry,
+  RuleEntry,
   SkillEntry,
 } from '../types'
 import { MCP_CLI_ALTERNATIVES, LOW_FREQUENCY_PLUGINS } from '../types'
@@ -15,6 +16,7 @@ export interface FsCollectResult {
   skillList: SkillEntry[]
   pluginList: PluginEntry[]
   hookList: HookEntry[]
+  ruleList: RuleEntry[]
   configFiles: ConfigFileSummary[]
   codebuddyMdSize: number
   historySize: number
@@ -63,20 +65,33 @@ export function scanFilesystem(adapter: PlatformAdapter): FsCollectResult {
   // CodeBuddy shows commands alongside skills in /context as "Skills and slash commands"
   const userCommands = scanCommandsAsSkills(paths.commandsDir, 'user')
   const projectCommands = scanCommandsAsSkills(`${process.cwd()}/.codebuddy/commands`, 'project')
-  const allSkills = [...skillList, ...projectSkills, ...marketplaceSkills, ...userCommands, ...projectCommands]
+  const allSkills = [
+    ...skillList,
+    ...projectSkills,
+    ...marketplaceSkills,
+    ...userCommands,
+    ...projectCommands,
+  ]
+
+  // Scan rules directory
+  const ruleList = scanRules(paths.rulesDir)
 
   const configFiles: ConfigFileSummary[] = []
-  for (const file of [paths.codebuddyMd, paths.settings, paths.mcp]) {
+  for (const file of [paths.codebuddyMd, paths.mcp]) {
     configFiles.push(summarizeFile(file))
   }
-  const codebuddyMdSize = configFiles.find(c => c.path === paths.codebuddyMd)?.sizeBytes ?? 0
+  const codebuddyMdSize = configFiles.find((c) => c.path === paths.codebuddyMd)?.sizeBytes ?? 0
   const historySize = summarizeFile(paths.historyFile).sizeBytes
+
+  // Detect duplicate skills (same name from multiple sources)
+  detectDuplicateSkills(allSkills)
 
   return {
     mcpList,
     skillList: allSkills,
     pluginList,
     hookList,
+    ruleList,
     configFiles,
     codebuddyMdSize,
     historySize,
@@ -246,7 +261,9 @@ function scanCommandsAsSkills(dir: string, source: SkillEntry['source']): SkillE
       const { description } = parseSkillFrontmatter(content)
       // /context shows only "description tokens" for commands — use description length
       // not full file size for token estimation
-      const descTokens = description ? Math.ceil(description.length / 4) : Math.ceil(content.length / 4)
+      const descTokens = description
+        ? Math.ceil(description.length / 4)
+        : Math.ceil(content.length / 4)
       const name = entry.replace(/\.md$/, '')
       entries.push({
         name,
@@ -301,5 +318,51 @@ function summarizeFile(path: string): ConfigFileSummary {
     lineCount,
     estimatedTokens: estimate(content),
     impactLevel: impactLevel(stats.size),
+  }
+}
+
+/**
+ * Scan rules/ directory for .md rule files.
+ * Distinguishes always-loaded rules (no paths: frontmatter) from path-scoped.
+ */
+function scanRules(dir: string): RuleEntry[] {
+  const entries: RuleEntry[] = []
+  if (!exists(dir) || !isDirectory(dir)) return entries
+  for (const entry of readDir(dir)) {
+    const fullPath = `${dir}/${entry}`
+    if (isDirectory(fullPath)) {
+      entries.push(...scanRules(fullPath))
+    } else if (entry.endsWith('.md')) {
+      const content = readFile(fullPath)
+      const stats = getStats(fullPath)
+      const name = entry.replace(/\.md$/, '')
+      // Rule is always-loaded if frontmatter has no "paths:" field
+      const alwaysLoaded = !/^paths:\s/m.test(content.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '')
+      entries.push({
+        name,
+        path: fullPath,
+        alwaysLoaded,
+        fileSizeBytes: stats.size,
+        estimatedTokens: estimate(content),
+      })
+    }
+  }
+  return entries
+}
+
+/**
+ * Detect duplicate skills (same name appearing from multiple sources).
+ * Sets `duplicateSource` on each entry that has a duplicate.
+ */
+function detectDuplicateSkills(skills: SkillEntry[]): void {
+  const seen = new Map<string, SkillEntry>()
+  for (const s of skills) {
+    const existing = seen.get(s.name)
+    if (existing) {
+      existing.duplicateSource = existing.duplicateSource ?? existing.source
+      s.duplicateSource = s.source
+    } else {
+      seen.set(s.name, s)
+    }
   }
 }

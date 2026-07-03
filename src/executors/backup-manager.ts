@@ -9,6 +9,7 @@ const BACKUP_GLOB_PREFIX = '.st-backup-'
 /**
  * Backup config files that may be modified, returning a timestamp string.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function backup(_report: DiagnosisReport): Promise<string> {
   const timestamp = dayjs().format('YYYYMMDDHHmmss')
   const adapter = new CodeBuddyAdapter()
@@ -38,6 +39,7 @@ export async function backup(_report: DiagnosisReport): Promise<string> {
   return timestamp
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function listBackups(): Promise<BackupRecord[]> {
   const dir = getCodebuddyDir()
   if (!exists(dir)) return []
@@ -57,12 +59,12 @@ export async function listBackups(): Promise<BackupRecord[]> {
 export async function restoreLatest(): Promise<boolean> {
   const backups = await listBackups()
   if (backups.length === 0) return false
-  return restoreRecord(backups[0]!)
+  return restoreRecord(backups[0])
 }
 
 export async function restoreByTimestamp(timestamp: string): Promise<boolean> {
   const backups = await listBackups()
-  const target = backups.find(b => b.timestamp === timestamp)
+  const target = backups.find((b) => b.timestamp === timestamp)
   if (!target) return false
   return restoreRecord(target)
 }

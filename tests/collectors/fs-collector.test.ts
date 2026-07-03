@@ -9,6 +9,7 @@ const FIXTURES = `${__dirname}/../fixtures`
 function makeAdapter(root: string): PlatformAdapter {
   return {
     name: 'test',
+    // eslint-disable-next-line @typescript-eslint/require-await
     async detectInstall() {
       return true
     },
@@ -45,7 +46,7 @@ describe('fs-collector', () => {
     const adapter = makeAdapter(FIXTURES)
     const result = scanFilesystem(adapter)
     expect(result.mcpList.length).toBe(3)
-    const headroom = result.mcpList.find(m => m.name === 'headroom')
+    const headroom = result.mcpList.find((m) => m.name === 'headroom')
     expect(headroom).toBeDefined()
     expect(headroom!.status).toBe('enabled')
     expect(headroom!.type).toBe('stdio')
@@ -55,7 +56,7 @@ describe('fs-collector', () => {
   it('should detect CLI alternatives', () => {
     const adapter = makeAdapter(FIXTURES)
     const result = scanFilesystem(adapter)
-    const playwright = result.mcpList.find(m => m.name === 'Playwright')
+    const playwright = result.mcpList.find((m) => m.name === 'Playwright')
     expect(playwright).toBeDefined()
     expect(playwright!.hasCliAlternative).toBe(true)
     expect(playwright!.cliAlternative).toBe('playwright')
@@ -65,7 +66,7 @@ describe('fs-collector', () => {
     const adapter = makeAdapter(FIXTURES)
     const result = scanFilesystem(adapter)
     expect(result.pluginList.length).toBe(5)
-    const caveman = result.pluginList.find(p => p.id === 'caveman@caveman')
+    const caveman = result.pluginList.find((p) => p.id === 'caveman@caveman')
     expect(caveman).toBeDefined()
     expect(caveman!.enabled).toBe(true)
   })
@@ -73,7 +74,7 @@ describe('fs-collector', () => {
   it('should flag low-frequency plugins', () => {
     const adapter = makeAdapter(FIXTURES)
     const result = scanFilesystem(adapter)
-    const pptx = result.pluginList.find(p => p.id === 'pptx@codebuddy-plugins-official')
+    const pptx = result.pluginList.find((p) => p.id === 'pptx@codebuddy-plugins-official')
     expect(pptx).toBeDefined()
     expect(pptx!.isLowFrequency).toBe(true)
   })
@@ -82,7 +83,7 @@ describe('fs-collector', () => {
     const adapter = makeAdapter(FIXTURES)
     const result = scanFilesystem(adapter)
     expect(result.hookList.length).toBe(2)
-    const bashHook = result.hookList.find(h => h.matcher === 'Bash')
+    const bashHook = result.hookList.find((h) => h.matcher === 'Bash')
     expect(bashHook).toBeDefined()
     expect(bashHook!.command).toBe('rtk hook codebuddy')
   })
@@ -90,7 +91,7 @@ describe('fs-collector', () => {
   it('should summarize config files', () => {
     const adapter = makeAdapter(FIXTURES)
     const result = scanFilesystem(adapter)
-    const mcpFile = result.configFiles.find(c => c.path.endsWith('mcp.json'))
+    const mcpFile = result.configFiles.find((c) => c.path.endsWith('mcp.json'))
     expect(mcpFile).toBeDefined()
     expect(mcpFile!.exists).toBe(true)
     expect(mcpFile!.sizeBytes).toBeGreaterThan(0)

@@ -19,6 +19,20 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', 'bin/**', '*.config.*'],
+    // CLI 输出模块：console.log/error 是核心输出方式，允许使用。
+    files: [
+      'src/utils/output.ts',
+      'src/commands/trace.ts',
+      'src/commands/optimize.ts',
+      'src/commands/report.ts',
+      'src/commands/rollback.ts',
+      'src/utils/error-handler.ts',
+    ],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    ignores: ['dist/**', 'node_modules/**', 'bin/**', 'coverage/**', '*.config.*'],
   },
 )

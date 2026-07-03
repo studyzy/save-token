@@ -1,14 +1,27 @@
-import type { DiagnoseOptions, DiagnosisReport, ContextItem, ToolDetection, SkillEntry } from '../types'
+import type {
+  DiagnoseOptions,
+  DiagnosisReport,
+  ContextItem,
+  ToolDetection,
+  SkillEntry,
+} from '../types'
 import type { ToolId } from '../types'
 import { CodeBuddyAdapter } from '../adapters/codebuddy-adapter'
 import { scanFilesystem } from '../collectors/fs-collector'
 import { probe } from '../collectors/headless-collector'
-import { MCP_LIST_PROMPT, MCP_LIST_SCHEMA, SKILL_LIST_PROMPT, SKILL_LIST_SCHEMA } from '../utils/prompt-templates'
+import { runProxyDiagnose } from '../collectors/proxy-collector'
+import {
+  MCP_LIST_PROMPT,
+  MCP_LIST_SCHEMA,
+  SKILL_LIST_PROMPT,
+  SKILL_LIST_SCHEMA,
+} from '../utils/prompt-templates'
 import { commandExists, getPlatform } from '../utils/platform'
 import { exec } from 'tinyexec'
 import { printDiagnosisReport } from '../utils/output'
 import { writeFile } from '../utils/fs-operations'
 import { handleExitPromptError, handleGeneralError } from '../utils/error-handler'
+import { writeResource } from '../utils/resource-dir'
 import { i18n } from '../i18n'
 
 interface HeadlessMcpItem {
@@ -27,26 +40,38 @@ interface HeadlessSkillItem {
 export async function diagnose(options: DiagnoseOptions): Promise<void> {
   try {
     const adapter = new CodeBuddyAdapter()
-    const report = await runDiagnose(adapter, options)
+    const { report, rawBody } = await runDiagnose(adapter, options)
     printDiagnosisReport(report, options.format ?? 'terminal')
     if (options.report) {
       writeFile(options.report, JSON.stringify(report, null, 2))
+      // Write raw proxy body if available
+      if (rawBody) {
+        const rawPath = options.report.replace(/\.json$/, '-raw.json')
+        writeFile(rawPath, JSON.stringify(rawBody, null, 2))
+      }
     }
   } catch (error) {
     if (!handleExitPromptError(error)) handleGeneralError(error)
   }
 }
 
+export interface DiagnoseResult {
+  report: DiagnosisReport
+  rawBody: unknown
+}
+
 export async function runDiagnose(
   adapter: CodeBuddyAdapter,
   options: DiagnoseOptions,
-): Promise<DiagnosisReport> {
+): Promise<DiagnoseResult> {
   const warnings: string[] = []
   const platform = getPlatform()
 
   const codebuddyInstalled = await adapter.detectInstall()
   let codebuddyVersion: string | null = null
   let headlessAvailable = false
+  let rawBody: unknown = null
+  let dataSource: DiagnosisReport['dataSource'] = 'fs-only'
 
   if (!codebuddyInstalled) {
     warnings.push(i18n.t('errors:codebuddyNotFound'))
@@ -58,18 +83,102 @@ export async function runDiagnose(
   }
 
   const fs = scanFilesystem(adapter)
+  writeResource('fs-collect.json', fs)
 
   let mcpList = fs.mcpList
   let skillList = fs.skillList
 
+  // Priority 1: Proxy mode — intercept real API request
   if (headlessAvailable && !options.noHeadless) {
+    const proxyResult = await runProxyDiagnose(adapter)
+    if (proxyResult.ok && proxyResult.parsed) {
+      dataSource = 'proxy'
+      rawBody = proxyResult.rawBody
+      writeResource('proxy-raw-body.json', proxyResult.rawBody)
+      writeResource('proxy-parsed.json', proxyResult.parsed)
+
+      // Build context overview from proxy data
+      const proxyContextItems: ContextItem[] = []
+
+      // Messages by role
+      for (const [role, info] of Object.entries(proxyResult.parsed.messagesByRole)) {
+        proxyContextItems.push({
+          name: `${role} messages`,
+          type: 'message',
+          estimatedTokens: info.estimatedTokens,
+          source: 'proxy',
+        })
+      }
+
+      // Tool definitions — show as top-level item
+      if (proxyResult.parsed.toolDefinitionsTokens > 0) {
+        const builtin = proxyResult.parsed.builtinToolCount
+        const mcp = proxyResult.parsed.mcpToolCount
+        proxyContextItems.push({
+          name: `Tool definitions (${builtin}内置 + ${mcp}MCP)`,
+          type: 'tool-definitions',
+          estimatedTokens: proxyResult.parsed.toolDefinitionsTokens,
+          source: 'proxy',
+        })
+      }
+
+      const contextOverview: DiagnosisReport['contextOverview'] = {
+        totalEstimatedTokens: proxyResult.parsed.totalEstimatedTokens,
+        breakdown: proxyContextItems,
+      }
+
+      // Merge proxy skill references with filesystem data for enriched info
+      const proxySkillNames = new Set(proxyResult.parsed.skillReferences)
+      const enrichedSkills = fs.skillList.map((s) => ({
+        ...s,
+        loaded: proxySkillNames.has(s.name) ? true : (s.loaded ?? false),
+      }))
+
+      const toolDetection = await detectTools(fs)
+
+      const report: DiagnosisReport = {
+        scanTimestamp: new Date().toISOString(),
+        codebuddyVersion,
+        platform,
+        contextOverview,
+        mcpList,
+        skillList: enrichedSkills,
+        pluginList: fs.pluginList,
+        hookList: fs.hookList,
+        ruleList: fs.ruleList,
+        configFiles: fs.configFiles,
+        toolDetection,
+        headlessAvailable,
+        dataSource,
+        warnings,
+        proxyDetails: {
+          model: proxyResult.parsed.model,
+          toolDefinitions: proxyResult.parsed.toolDefinitions,
+          messageBreakdown: proxyResult.parsed.messageBreakdown,
+          skillReferences: proxyResult.parsed.skillReferences,
+          mcpReferences: proxyResult.parsed.mcpReferences,
+        },
+      }
+      writeResource('diagnosis-report.json', report)
+
+      return { report, rawBody }
+    }
+    // Proxy failed, fall through to headless
+  }
+
+  // Priority 2: Headless mode — probe via codebuddy -p
+  if (headlessAvailable && !options.noHeadless) {
+    dataSource = 'headless'
     const [mcpProbe, skillProbe] = await Promise.all([
       probe(adapter, MCP_LIST_PROMPT, MCP_LIST_SCHEMA),
       probe(adapter, SKILL_LIST_PROMPT, SKILL_LIST_SCHEMA),
     ])
+    writeResource('headless-mcp.json', mcpProbe)
+    writeResource('headless-skill.json', skillProbe)
     if (!mcpProbe.ok) {
       warnings.push(i18n.t('errors:headlessFailed'))
       headlessAvailable = false
+      dataSource = 'fs-only'
     } else {
       const headlessMcps = (mcpProbe.parsed as HeadlessMcpItem[]) ?? []
       mcpList = mergeMcpLists(mcpList, headlessMcps)
@@ -83,7 +192,7 @@ export async function runDiagnose(
   const contextOverview = buildContextOverview(fs, mcpList, skillList)
   const toolDetection = await detectTools(fs)
 
-  return {
+  const report: DiagnosisReport = {
     scanTimestamp: new Date().toISOString(),
     codebuddyVersion,
     platform,
@@ -92,18 +201,23 @@ export async function runDiagnose(
     skillList,
     pluginList: fs.pluginList,
     hookList: fs.hookList,
+    ruleList: fs.ruleList,
     configFiles: fs.configFiles,
     toolDetection,
     headlessAvailable,
+    dataSource,
     warnings,
   }
+  writeResource('diagnosis-report.json', report)
+
+  return { report, rawBody }
 }
 
 async function getCodebuddyVersion(): Promise<string | null> {
   try {
     const res = await exec('codebuddy', ['--version'])
     if (res.exitCode === 0 && res.stdout) {
-      return res.stdout.trim().split('\n')[0]!.trim()
+      return res.stdout.trim().split('\n')[0].trim()
     }
   } catch {
     // ignore
@@ -111,9 +225,12 @@ async function getCodebuddyVersion(): Promise<string | null> {
   return null
 }
 
-function mergeMcpLists(fsList: DiagnosisReport['mcpList'], headless: HeadlessMcpItem[]): DiagnosisReport['mcpList'] {
-  const headlessMap = new Map(headless.map(h => [h.name, h]))
-  return fsList.map(mcp => {
+function mergeMcpLists(
+  fsList: DiagnosisReport['mcpList'],
+  headless: HeadlessMcpItem[],
+): DiagnosisReport['mcpList'] {
+  const headlessMap = new Map(headless.map((h) => [h.name, h]))
+  return fsList.map((mcp) => {
     const h = headlessMap.get(mcp.name)
     if (h) {
       return {
@@ -126,12 +243,15 @@ function mergeMcpLists(fsList: DiagnosisReport['mcpList'], headless: HeadlessMcp
   })
 }
 
-function mergeSkillLists(fsList: DiagnosisReport['skillList'], headless: HeadlessSkillItem[]): DiagnosisReport['skillList'] {
+function mergeSkillLists(
+  fsList: DiagnosisReport['skillList'],
+  headless: HeadlessSkillItem[],
+): DiagnosisReport['skillList'] {
   // Headless probe reflects actual loaded skills — use it as authoritative source
   // but enrich with filesystem metadata (sourcePath, fileSizeBytes, estimatedTokens)
   if (headless.length > 0) {
-    const fsByName = new Map(fsList.map(s => [s.name, s]))
-    return headless.map(h => {
+    const fsByName = new Map(fsList.map((s) => [s.name, s]))
+    return headless.map((h) => {
       const fsSkill = fsByName.get(h.name)
       return {
         name: h.name,
@@ -144,7 +264,7 @@ function mergeSkillLists(fsList: DiagnosisReport['skillList'], headless: Headles
       }
     })
   }
-  return fsList.map(s => ({ ...s, loaded: false }))
+  return fsList.map((s) => ({ ...s, loaded: false }))
 }
 
 function buildContextOverview(
@@ -173,10 +293,9 @@ function buildContextOverview(
   }
   for (const cfg of fs.configFiles) {
     if (!cfg.exists) continue
-    const isMemory = cfg.path.endsWith('CODEBUDDY.md')
     items.push({
       name: cfg.path.split('/').pop() ?? cfg.path,
-      type: isMemory ? 'memory-file' : 'system-prompt',
+      type: 'memory-file',
       estimatedTokens: cfg.estimatedTokens,
       source: cfg.path,
     })
@@ -192,6 +311,7 @@ async function detectTools(fs: ReturnType<typeof scanFilesystem>): Promise<ToolD
     { id: 'headroom', saving: '47-92% 上下文压缩', type: 'cli' },
     { id: 'lean-ctx', saving: '60-90% 读取筛选', type: 'cli' },
     { id: 'graphify', saving: '71.5x 代码图谱', type: 'cli' },
+    { id: 'ponytail', saving: '54% 代码量 + 20-75% 成本', type: 'plugin' },
   ]
   const results: ToolDetection[] = []
   for (const t of tools) {
@@ -200,7 +320,7 @@ async function detectTools(fs: ReturnType<typeof scanFilesystem>): Promise<ToolD
 
     if (t.type === 'plugin') {
       // Check if plugin exists in enabledPlugins or its marketplace directory
-      const plugin = fs.pluginList.find(p => p.pluginId === t.id)
+      const plugin = fs.pluginList.find((p) => p.pluginId === t.id)
       installed = !!plugin?.enabled
       codebuddyIntegrated = installed
     } else {

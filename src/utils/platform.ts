@@ -81,10 +81,7 @@ export async function commandExists(command: string): Promise<boolean> {
       if (nodeFs.existsSync(path)) return true
     }
     if (getPlatform() === 'macos') {
-      const homebrewPaths = [
-        `/opt/homebrew/bin/${command}`,
-        `/usr/local/bin/${command}`,
-      ]
+      const homebrewPaths = [`/opt/homebrew/bin/${command}`, `/usr/local/bin/${command}`]
       for (const path of homebrewPaths) {
         if (nodeFs.existsSync(path)) return true
       }
@@ -98,7 +95,7 @@ export async function findCommandPath(command: string): Promise<string | null> {
     const cmd = getPlatform() === 'windows' ? 'where' : 'which'
     const res = await exec(cmd, [command])
     if (res.exitCode === 0 && res.stdout.trim()) {
-      return res.stdout.trim().split('\n')[0]!.trim()
+      return res.stdout.trim().split('\n')[0].trim()
     }
   } catch {
     // ignore
@@ -110,7 +107,7 @@ export async function getCommandVersion(command: string): Promise<string | null>
   try {
     const res = await exec(command, ['--version'])
     if (res.exitCode === 0 && res.stdout) {
-      return res.stdout.trim().split('\n')[0]!.trim()
+      return res.stdout.trim().split('\n')[0].trim()
     }
   } catch {
     // ignore

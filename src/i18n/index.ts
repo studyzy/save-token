@@ -76,7 +76,7 @@ export function getCurrentLanguage(): SupportedLang {
 export function format(template: string, values?: Record<string, string>): string {
   if (!values) return template
   return Object.keys(values).reduce(
-    (result, key) => result.replace(new RegExp(`{${key}}`, 'g'), values[key]!),
+    (result, key) => result.replace(new RegExp(`{${key}}`, 'g'), values[key]),
     template,
   )
 }

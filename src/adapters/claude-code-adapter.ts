@@ -6,6 +6,7 @@ import type { PlatformAdapter, PlatformConfigPaths } from './platform-adapter'
 export class ClaudeCodeAdapter implements PlatformAdapter {
   readonly name = 'claude-code'
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   async detectInstall(): Promise<boolean> {
     throw new Error('ClaudeCodeAdapter not implemented')
   }

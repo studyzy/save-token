@@ -41,7 +41,7 @@ describe('analyze command', () => {
     await analyze({ noHeadless: true, format: 'json' })
 
     expect(logs.length).toBeGreaterThan(0)
-    const json = JSON.parse(logs[0]!)
+    const json = JSON.parse(logs[0]) as Record<string, unknown>
     expect(json).toHaveProperty('suggestions')
     expect(json).toHaveProperty('totalEstimatedSaving')
     expect(json).toHaveProperty('totalPercent')

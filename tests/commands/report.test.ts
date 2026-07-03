@@ -10,7 +10,14 @@ vi.mock('../../src/utils/platform', () => ({
 }))
 
 import { report } from '../../src/commands/report'
-import { ensureDir, writeFile, removeFile, exists, readDir, readFile } from '../../src/utils/fs-operations'
+import {
+  ensureDir,
+  writeFile,
+  removeFile,
+  exists,
+  readDir,
+  readFile,
+} from '../../src/utils/fs-operations'
 
 const TMP = '/tmp/st-report-test'
 
@@ -57,7 +64,7 @@ describe('report command', () => {
     await report({ format: 'json', output: `${TMP}/report.json`, noHeadless: true })
 
     expect(exists(`${TMP}/report.json`)).toBe(true)
-    const json = JSON.parse(readFile(`${TMP}/report.json`))
+    const json = JSON.parse(readFile(`${TMP}/report.json`)) as Record<string, unknown>
     expect(json).toHaveProperty('report')
     expect(json).toHaveProperty('suggestions')
 

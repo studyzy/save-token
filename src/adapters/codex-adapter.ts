@@ -6,6 +6,7 @@ import type { PlatformAdapter, PlatformConfigPaths } from './platform-adapter'
 export class CodexAdapter implements PlatformAdapter {
   readonly name = 'codex'
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   async detectInstall(): Promise<boolean> {
     throw new Error('CodexAdapter not implemented')
   }

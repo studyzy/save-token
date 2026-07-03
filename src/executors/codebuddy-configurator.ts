@@ -10,6 +10,7 @@ interface ConfigResult {
 /**
  * Apply a config-change suggestion to CodeBuddy config files.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function applyConfigChange(suggestion: OptimizationSuggestion): Promise<ConfigResult> {
   const adapter = new CodeBuddyAdapter()
   const paths = adapter.getConfigPaths()

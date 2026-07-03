@@ -30,7 +30,7 @@ describe('tool-installer', () => {
 
   it('should install and verify when not installed', async () => {
     vi.mocked(commandExists).mockResolvedValue(false)
-    vi.mocked(exec).mockResolvedValue({ stdout: 'ok', stderr: '', exitCode: 0 } as any)
+    vi.mocked(exec).mockResolvedValue({ stdout: 'ok', stderr: '', exitCode: 0 })
 
     const result = await installTool('rtk')
 
@@ -41,7 +41,7 @@ describe('tool-installer', () => {
 
   it('should fail when install command fails', async () => {
     vi.mocked(commandExists).mockResolvedValue(false)
-    vi.mocked(exec).mockResolvedValue({ stdout: '', stderr: 'install failed', exitCode: 1 } as any)
+    vi.mocked(exec).mockResolvedValue({ stdout: '', stderr: 'install failed', exitCode: 1 })
 
     const result = await installTool('rtk')
 

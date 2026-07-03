@@ -10,7 +10,7 @@ import { handleExitPromptError, handleGeneralError } from '../utils/error-handle
 export async function analyze(options: AnalyzeOptions): Promise<void> {
   try {
     const adapter = new CodeBuddyAdapter()
-    const report = await runDiagnose(adapter, options)
+    const { report } = await runDiagnose(adapter, options)
     const suggestions = generateSuggestions(report)
     const totalSaving = suggestions.reduce((s, x) => s + x.estimatedSavingTokens, 0)
     const totalPercent = report.contextOverview.totalEstimatedTokens

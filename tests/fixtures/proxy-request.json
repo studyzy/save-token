@@ -1,0 +1,36 @@
+{
+  "model": "codebuddy-v2",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are CodeBuddy Code. You are an interactive CLI tool that helps users with software engineering tasks.\n\n<available_skills>\n- name: brainstorming\n  description: Brainstorm ideas\n- name: commit\n  description: Generate commit messages\n</available_skills>"
+    },
+    {
+      "role": "user",
+      "content": "<system-reminder>Memory: user is a senior developer</system-reminder>\n\nHello"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a file from the filesystem"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "Write content to a file"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_code",
+        "description": "Search codebase with regex"
+      }
+    }
+  ]
+}

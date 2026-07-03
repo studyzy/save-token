@@ -21,7 +21,11 @@ describe('diagnose command', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(commandExists).mockResolvedValue(true)
-    vi.mocked(tinyexec.exec).mockResolvedValue({ stdout: 'codebuddy 2.114.1\n', stderr: '', exitCode: 0 } as any)
+    vi.mocked(tinyexec.exec).mockResolvedValue({
+      stdout: 'codebuddy 2.114.1\n',
+      stderr: '',
+      exitCode: 0,
+    })
 
     const cbDir = `${TMP}/.codebuddy`
     ensureDir(cbDir)
@@ -44,21 +48,22 @@ describe('diagnose command', () => {
 
   it('should produce DiagnosisReport with noHeadless=true', async () => {
     const adapter = new CodeBuddyAdapter()
-    const report = await runDiagnose(adapter, { noHeadless: true })
+    const { report } = await runDiagnose(adapter, { noHeadless: true })
 
     expect(report.scanTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(report.platform).toBe('macos')
     expect(report.headlessAvailable).toBe(false)
     expect(report.mcpList.length).toBe(1)
-    expect(report.mcpList[0]!.name).toBe('test')
+    expect(report.mcpList[0].name).toBe('test')
     expect(Array.isArray(report.toolDetection)).toBe(true)
-    expect(report.toolDetection.length).toBe(5)
+    expect(report.toolDetection.length).toBe(6)
+    expect(report.dataSource).toBe('fs-only')
   })
 
   it('should warn when codebuddy not installed', async () => {
     vi.mocked(commandExists).mockResolvedValue(false)
     const adapter = new CodeBuddyAdapter()
-    const report = await runDiagnose(adapter, { noHeadless: true })
+    const { report } = await runDiagnose(adapter, { noHeadless: true })
 
     expect(report.warnings.length).toBeGreaterThan(0)
     expect(report.codebuddyVersion).toBeNull()

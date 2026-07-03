@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { estimate, estimateFile, estimateMcpTokens, impactLevel, TOKENS_PER_MCP_TOOL } from '../../src/collectors/token-estimator'
+import {
+  estimate,
+  estimateFile,
+  estimateMcpTokens,
+  impactLevel,
+  TOKENS_PER_MCP_TOOL,
+} from '../../src/collectors/token-estimator'
 
 describe('token-estimator', () => {
   describe('estimate', () => {
@@ -7,13 +13,13 @@ describe('token-estimator', () => {
       expect(estimate('')).toBe(0)
     })
 
-    it('should return ceil(length/4) for non-empty', () => {
-      expect(estimate('hello')).toBe(2) // 5/4=1.25 -> 2
-      expect(estimate('hello world!')).toBe(3) // 12/4=3
+    it('should return ceil(length/3.3) for non-empty', () => {
+      expect(estimate('hello')).toBe(2) // 5/3.3=1.52 -> 2
+      expect(estimate('hello world!')).toBe(4) // 12/3.3=3.64 -> 4
     })
 
     it('should handle unicode', () => {
-      expect(estimate('你好')).toBe(1) // 2 chars / 4 = 0.5 -> 1
+      expect(estimate('你好')).toBe(2) // 2 CJK chars = 2 tokens
     })
   })
 
@@ -23,7 +29,7 @@ describe('token-estimator', () => {
     })
 
     it('should estimate from content', () => {
-      expect(estimateFile('hello world')).toBe(3)
+      expect(estimateFile('hello world')).toBe(4) // 11/3.3=3.33 -> 4
     })
   })
 
@@ -33,11 +39,11 @@ describe('token-estimator', () => {
     })
 
     it('should fall back to config size when toolsCount is null', () => {
-      expect(estimateMcpTokens(null, 400)).toBe(100)
+      expect(estimateMcpTokens(null, 400)).toBe(122)
     })
 
     it('should fall back to config size when toolsCount is 0', () => {
-      expect(estimateMcpTokens(0, 400)).toBe(100)
+      expect(estimateMcpTokens(0, 400)).toBe(122)
     })
   })
 
