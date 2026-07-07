@@ -59,8 +59,13 @@ const BUILTIN_TOOLS = new Set([
   'DeferExecuteTool',
   'SendMessage',
   'WaitForMcpServers',
-  'headroom_retrieve',
 ])
+
+/**
+ * MCP tools that appear directly in the top-level tools[] array (non-deferred).
+ * These carry an `mcp__` prefix or belong to known MCP servers.
+ */
+const MCP_PREFIXES = ['mcp__', 'headroom_']
 
 /**
  * Deferred tools loaded via ToolSearch/DeferExecuteTool pattern.
@@ -82,6 +87,7 @@ const DEFERRED_TOOLS = new Set([
 ])
 
 function classifyTool(name: string): ProxyToolDef['category'] {
+  if (MCP_PREFIXES.some((p) => name.startsWith(p))) return 'mcp'
   if (BUILTIN_TOOLS.has(name)) return 'builtin'
   if (DEFERRED_TOOLS.has(name)) return 'deferred'
   return 'mcp'
@@ -181,6 +187,19 @@ export function parseProxyBody(body: unknown): ProxyDiagnosisData {
     }
   })
 
+  // --- MCP tools from ToolSearch description ---
+  const deferredMcp = extractDeferredMcpTools(tools)
+  toolDefinitions.push(...deferredMcp.tools)
+  // Merge server-level MCP references from deferred tools block
+  for (const ref of deferredMcp.references) {
+    if (!mcpReferences.includes(ref)) {
+      mcpReferences.push(ref)
+    }
+  }
+
+  // --- Skill token breakdown from Skill tool definition ---
+  const skillTokens = extractSkillTokens(tools)
+
   const builtinToolCount = toolDefinitions.filter((t) => t.category === 'builtin').length
   const mcpToolCount = toolDefinitions.filter((t) => t.category === 'mcp').length
   const toolDefinitionsTokens = toolDefinitions.reduce((s, t) => s + t.estimatedTokens, 0)
@@ -201,6 +220,7 @@ export function parseProxyBody(body: unknown): ProxyDiagnosisData {
     memoryTokens,
     rulesTokens,
     skillReferences,
+    skillTokens,
     mcpReferences,
     model,
   }
@@ -230,4 +250,107 @@ function extractMcpFromText(text: string, mcpReferences: string[]): void {
       mcpReferences.push(name)
     }
   }
+}
+
+/**
+ * Parse individual skill entries from the Skill tool definition.
+ * Each skill entry in the <available_skills> block has format:
+ *   name: description... (location: /path/to/SKILL.md)
+ * Returns a map from skill name to its description text and estimated token count.
+ * Builtin commands (clear, config, etc.) with empty location are skipped.
+ */
+function extractSkillTokens(
+  tools: ToolDefinition[],
+): Record<string, { description: string; estimatedTokens: number }> {
+  const skillTool = tools.find((t) => (t.function?.name ?? t.name) === 'Skill')
+  if (!skillTool) return {}
+
+  const desc = skillTool.function?.description ?? skillTool.description ?? ''
+  const match = desc.match(/<available_skills>\n([\s\S]*?)\n<\/available_skills>/)
+  if (!match) return {}
+
+  const block = match[1] ?? ''
+  const entries = block.split('\n- ')
+  const result: Record<string, { description: string; estimatedTokens: number }> = {}
+
+  for (const entry of entries) {
+    const trimmed = entry.trim()
+    if (!trimmed) continue
+
+    // Only count real skills (those with a non-empty file location)
+    const locMatch = trimmed.match(/\(location:\s*(.+?)\)/)
+    if (!locMatch?.[1]) continue
+
+    const nameMatch = trimmed.match(/^([^:]+):/)
+    if (!nameMatch?.[1]) continue
+
+    const name = nameMatch[1]
+    result[name] = {
+      description: trimmed,
+      estimatedTokens: Math.ceil(trimmed.length / 4),
+    }
+  }
+
+  return result
+}
+
+/**
+ * Extract MCP tools from ToolSearch.description's <available_deferred_tools> block.
+ *
+ * Two cases:
+ * 1. Bare `mcp__XXX` (no colon, no description) → server-level reference, returned in `references`.
+ * 2. `mcp__XXX: description...` → full tool definition with schema in top-level tools[], returned in `tools`.
+ */
+function extractDeferredMcpTools(tools: ToolDefinition[]): {
+  tools: ProxyToolDef[]
+  references: string[]
+} {
+  const toolSearchDef = tools.find((t) => (t.function?.name ?? t.name) === 'ToolSearch')
+  if (!toolSearchDef) return { tools: [], references: [] }
+
+  const desc = toolSearchDef.function?.description ?? toolSearchDef.description ?? ''
+  const match = desc.match(/<available_deferred_tools>([\s\S]*?)<\/available_deferred_tools>/)
+  if (!match) return { tools: [], references: [] }
+
+  const block = match[1] ?? ''
+  const lines = block.split('\n')
+  const result: ProxyToolDef[] = []
+  const refs: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    if (trimmed.startsWith('mcp__')) {
+      // Bare `mcp__XXX` → server-level reference, not a concrete tool
+      if (!trimmed.includes(':')) {
+        refs.push(trimmed)
+        continue
+      }
+      // `mcp__XXX: description...` → full tool definition
+      result.push({
+        name: trimmed.split(':')[0],
+        category: 'mcp',
+        estimatedTokens: estimateTokens(trimmed),
+        description: trimmed,
+      })
+      continue
+    }
+
+    // Non-MCP deferred tools have `Name: description` format
+    const nameMatch = trimmed.match(/^(\S+):/)
+    if (!nameMatch?.[1]) continue
+
+    const name = nameMatch[1]
+    if (!name.startsWith('mcp__')) continue
+
+    result.push({
+      name,
+      category: 'mcp',
+      estimatedTokens: estimateTokens(trimmed),
+      description: trimmed,
+    })
+  }
+
+  return { tools: result, references: refs }
 }

@@ -78,3 +78,76 @@ describe('proxy parser', () => {
     expect(result.memoryTokens).toBeGreaterThan(0)
   })
 })
+
+describe('proxy parser — MCP tools in top-level tools[] (proxy-raw-body-mcp.json)', () => {
+  const fixturePath = `${__dirname}/../fixtures/proxy-raw-body-mcp.json`
+
+  // 3 MCP tools in top-level (full schema) + 1 bare name mcp__headroom in ToolSearch deferred
+  it('should classify MCP tools from top-level tools[]', () => {
+    const body: unknown = JSON.parse(readFile(fixturePath))
+    const result = parseProxyBody(body)
+
+    const mcpTools = result.toolDefinitions.filter((t) => t.category === 'mcp')
+    expect(mcpTools.length).toBe(3)
+    expect(mcpTools.map((t) => t.name)).toEqual([
+      'mcp__headroom__headroom_compress',
+      'mcp__headroom__headroom_retrieve',
+      'mcp__headroom__headroom_stats',
+    ])
+
+    // Each MCP tool should have meaningful token estimates (full JSON schema)
+    for (const t of mcpTools) {
+      expect(t.estimatedTokens).toBeGreaterThan(50)
+    }
+  })
+
+  it('should track bare mcp__headroom as MCP reference', () => {
+    const body: unknown = JSON.parse(readFile(fixturePath))
+    const result = parseProxyBody(body)
+
+    expect(result.mcpReferences).toContain('mcp__headroom')
+  })
+
+  it('should have correct builtin/MCP counts', () => {
+    const body: unknown = JSON.parse(readFile(fixturePath))
+    const result = parseProxyBody(body)
+
+    // 22 builtin tools + 3 MCP tools = 25 total
+    expect(result.builtinToolCount).toBe(22)
+    expect(result.mcpToolCount).toBe(3)
+    expect(result.toolDefinitions.length).toBe(25)
+  })
+})
+
+describe('proxy parser — MCP tools only in ToolSearch deferred (proxy-raw-body-defer-mcp.json)', () => {
+  const fixturePath = `${__dirname}/../fixtures/proxy-raw-body-defer-mcp.json`
+
+  // 0 MCP in top-level, 4 bare names in ToolSearch deferred
+  it('should have zero MCP tools in toolDefinitions', () => {
+    const body: unknown = JSON.parse(readFile(fixturePath))
+    const result = parseProxyBody(body)
+
+    const mcpTools = result.toolDefinitions.filter((t) => t.category === 'mcp')
+    expect(mcpTools.length).toBe(0)
+    expect(result.mcpToolCount).toBe(0)
+  })
+
+  it('should track all deferred MCP names as references', () => {
+    const body: unknown = JSON.parse(readFile(fixturePath))
+    const result = parseProxyBody(body)
+
+    expect(result.mcpReferences.length).toBe(4)
+    expect(result.mcpReferences).toContain('mcp__headroom')
+    expect(result.mcpReferences).toContain('mcp__headroom__headroom_compress')
+    expect(result.mcpReferences).toContain('mcp__headroom__headroom_retrieve')
+    expect(result.mcpReferences).toContain('mcp__headroom__headroom_stats')
+  })
+
+  it('should have all tools as builtin', () => {
+    const body: unknown = JSON.parse(readFile(fixturePath))
+    const result = parseProxyBody(body)
+
+    expect(result.builtinToolCount).toBe(22)
+    expect(result.toolDefinitions.length).toBe(22)
+  })
+})

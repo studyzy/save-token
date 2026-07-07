@@ -57,6 +57,8 @@ export interface McpEntry {
   command?: string
   url?: string
   toolsCount: number | null
+  /** Detailed tool entries from proxy parsing (name + estimated tokens). */
+  toolEntries?: { name: string; estimatedTokens: number }[]
   deferLoading: boolean
   source: 'user' | 'project'
   estimatedTokens: number
@@ -277,6 +279,8 @@ export interface ProxyDiagnosisData {
   memoryTokens: number
   rulesTokens: number
   skillReferences: string[]
+  /** Per-skill token breakdown parsed from Skill tool definition (available_skills block). */
+  skillTokens: Record<string, { description: string; estimatedTokens: number }>
   mcpReferences: string[]
   model: string
 }

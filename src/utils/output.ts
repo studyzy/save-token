@@ -134,24 +134,33 @@ function renderDiagnosisTerminal(report: DiagnosisReport): string {
     }
   }
 
-  lines.push(ansis.bold(`MCP 服务 (${report.mcpList.length} 个)`))
+  lines.push(ansis.bold(`MCP 工具 (${report.mcpList.length} 个)`))
   lines.push('-'.repeat(40))
   for (const mcp of report.mcpList) {
     const mark = mcp.status === 'enabled' ? ansis.green('✓') : ansis.red('✗')
-    const defer = mcp.deferLoading ? 'defer: true' : 'defer: false'
+    const defer = mcp.deferLoading ? '延迟加载' : '直接加载'
     const cli = mcp.hasCliAlternative ? ` (CLI: ${mcp.cliAlternative})` : ''
+    const toolLabel =
+      mcp.toolEntries && mcp.toolEntries.length > 0
+        ? `${mcp.toolEntries.length} 个工具`
+        : mcp.toolsCount !== null
+          ? `${mcp.toolsCount} 个工具`
+          : '工具数未知'
     lines.push(
-      `  ${mark} ${mcp.name.padEnd(15)} [${mcp.type}] tools: ${mcp.toolsCount ?? '?'} ${defer} ~${mcp.estimatedTokens} tok${cli}`,
+      `  ${mark} ${mcp.name.padEnd(15)} [${mcp.type}] ${toolLabel} ${defer} ~${mcp.estimatedTokens} tok${cli}`,
     )
+    // List individual tools if available
+    if (mcp.toolEntries && mcp.toolEntries.length > 0) {
+      for (const te of mcp.toolEntries) {
+        lines.push(`       ${te.name.padEnd(30)} ~${String(te.estimatedTokens).padStart(5)} tok`)
+      }
+    }
   }
   lines.push('')
   lines.push(ansis.bold(`Skills (${report.skillList.length} 个)`))
   lines.push('-'.repeat(40))
-  for (const skill of report.skillList.slice(0, 10)) {
+  for (const skill of report.skillList) {
     lines.push(`  [${skill.source}] ${skill.name.padEnd(20)} ~${skill.estimatedTokens} tok`)
-  }
-  if (report.skillList.length > 10) {
-    lines.push(`  ... ${report.skillList.length - 10} more`)
   }
   lines.push('')
   lines.push(ansis.bold(`插件 (${report.pluginList.filter((p) => p.enabled).length} 个启用)`))
@@ -255,7 +264,7 @@ function renderDiagnosisMarkdown(report: DiagnosisReport): string {
     lines.push('')
   }
 
-  lines.push(`## MCP 服务 (${report.mcpList.length} 个)`)
+  lines.push(`## MCP 工具 (${report.mcpList.length} 个)`)
   lines.push('')
   lines.push('| 名称 | 状态 | 类型 | 工具数 | defer | 估算 Token | CLI 替代 |')
   lines.push('| --- | --- | --- | --- | --- | --- | --- |')

@@ -6,13 +6,42 @@ CodeBuddy 的 Token 消耗由**固定前缀**（System Prompt、Skill 定义、T
 
 `st diagnose` 的目标：**量化当前环境的 Token 占用，逐项分解出"谁在吃 Token"，为后续 optimize 提供决策依据。**
 
-## 数据采集：三层策略
+## 执行流程
 
-诊断的数据采集分为三个优先级，由高到低依次尝试，失败时自动降级。
+`runDiagnose` 是诊断的主入口，完整流程如下：
+
+```
+1. 检测 codebuddy 是否安装
+    └─ 未安装 → dataSource='fs-only'，仅文件系统扫描
+
+2. 文件系统扫描（始终执行，作为基础数据）
+    └─ scanFilesystem() 读取 ~/.codebuddy/ 目录
+    └─ 写入 fs-collect.json 到资源目录
+
+3. 三层降级采集（按优先级尝试）
+    ├─ Priority 1: Proxy 拦截
+    │    └─ 成功 → dataSource='proxy'，直接返回 report
+    │
+    ├─ Priority 2: Headless 探针（proxy 失败时）
+    │    ├─ 并行发起 2 个探针（MCP 列表 + Skill 列表）
+    │    ├─ mergeMcpLists() / mergeSkillLists() 合并 headless + fs 数据
+    │    └─ 成功 → dataSource='headless'
+    │
+    └─ Priority 3: 纯文件系统（headless 失败时）
+         └─ dataSource='fs-only'
+
+4. buildContextOverview() 汇总 Token 占用
+
+5. detectTools() 检测省 Token 工具安装状态
+```
+
+关键设计：**文件系统扫描始终执行**，作为基础数据源。Proxy 成功时直接返回（最高优先级），不再尝试 headless。Headless 在 proxy 失败时作为降级方案。
+
+## 数据采集：三层策略
 
 ### Priority 1 — Proxy 拦截（最精确）
 
-核心思路：拦截 CodeBuddy 发给 LLM API 的真实���求体（`POST /v2/chat/completions`），**深度解析** JSON 结构，提取所有 Token 消耗项。
+核心思路：拦截 CodeBuddy 发给 LLM API 的真实请求体（`POST /v2/chat/completions`），**深度解析** JSON 结构，提取所有 Token 消耗项。
 
 **流程**：
 
@@ -39,29 +68,23 @@ Proxy 透明转发所有 POST /v2/* 到真实 API
   └── Rules/Memory：从 system-reminder 块中识别 CODEBUDDY.md 和 Memory 注入
 ```
 
-**解析的请求体结构**：
+**Proxy 模式下的 MCP 数据构建**：
 
-```
-POST /v2/chat/completions
-{
-  "model": "deepseek-v4-pro-ioa",
-  "messages": [
-    { "role": "system", "content": "<system prompt + tool descriptions>" },
-    { "role": "user",  "content": [
-      { "type": "text", "text": "<system-reminder>Memory 指令</system-reminder>" },
-      { "type": "text", "text": "<system-reminder>Hook 状态</system-reminder>" },
-      { "type": "text", "text": "<codebuddyMd>CODEBUDDY.md 内容 + Rules</codebuddyMd>" },
-      { "type": "text", "text": "<available_skills>Skill 列表</available_skills>" },
-      { "type": "text", "text": "<user_query>用户问题</user_query>" }
-    ]}
-  ],
-  "tools": [
-    { "type": "function", "function": { "name": "Read", "description": "...", "parameters": {...} }},
-    { "type": "function", "function": { "name": "Bash", "description": "...", "parameters": {...} }},
-    ...
-  ]
-}
-```
+Proxy 模式不使用文件系统或 headless 的 MCP 列表，而是从拦截的请求体中**直接构建** `mcpList`（`buildMcpListFromProxy`）：
+
+- **来源1 — toolDefinitions**：请求体 `tools[]` 数组中 `category='mcp'` 的条目。这些是已加载到 `tools[]` 的 MCP 工具，有完整的 JSON Schema 定义。按 `mcp__SERVER` 前缀分组，统计每个 server 的工具数和 Token 数。
+
+- **来源2 — mcpReferences**：从 ToolSearch 工具的描述中提取的 `mcp__SERVER` 或 `mcp__SERVER__toolName` 引用。这些是延迟加载的 MCP 工具，只出现在 ToolSearch 描述文字中（不是 `tools[]` 数组），没有完整 JSON Schema。标记 `deferLoading: true`。
+
+- **合并逻辑**：两个来源以 server 名为 key 合并。同一 server 可能有部分工具在 `tools[]` 中（非延迟）和部分在 ToolSearch 描述中（延迟）。最终 `toolsCount` 和 `estimatedTokens` 为两者之和。
+
+**Proxy 模式下的 Skill 数据构建**：
+
+Proxy 模式不使用文件系统或 headless 的 skill 列表，而是从拦截的请求体中**直接构建** `skillList`：
+
+- 从 `<available_skills>` 块中提取实际出现在请求体里的 skill 名称和描述
+- 只列出**真正加载**的 skill（出现在 POST body 中的），未加载的 skill 不列出
+- 用文件系统的 `sourcePath`、`fileSizeBytes` 补充元信息，但 Token 估算以请求体中的实际内容为准
 
 **为什么是最精确的**：
 
@@ -81,6 +104,7 @@ POST /v2/chat/completions
 - `src/proxy/server.ts` — 本地 HTTP 代理服务器，拦截 POST /v2/* 请求
 - `src/proxy/parser.ts` — 解析捕获的请求体为结构化诊断数据
 - `src/collectors/proxy-collector.ts` — 协调整体 proxy 诊断流程
+- `src/commands/diagnose.ts` 中的 `buildMcpListFromProxy()` — 从 proxy 数据构建 MCP 列表
 
 ### Priority 2 — Headless 探针（次精确）
 
@@ -91,29 +115,37 @@ POST /v2/chat/completions
 ```
 并行发起两个无头探针：
   1. codebuddy -p "列出所有已启用 MCP 服务器" --output-format json --json-schema '<schema>' -y --max-turns 2
-  2. codebuddy -p "列出已加载的 Skills" --output-format json --json-schema '<schema>' -y --max-turns 2
+  2. codebuddy -p "列出当前会话已加载到上下文的 Skills" --output-format json --json-schema '<schema>' -y --max-turns 2
     ↓
 解析 JSON 响应
     ↓
 与文件系统采集数据合并（mergeMcpLists / mergeSkillLists）
 ```
 
+**探针 prompt 内容**：
+
+- **MCP 探针**（`MCP_LIST_PROMPT`）：要求列出所有已启用 MCP 服务器，输出 `name`、`status`、`toolsCount`、`source` 字段
+- **Skill 探针**（`SKILL_LIST_PROMPT`）：要求列出 `<available_skills>` 中实际加载的 Skill，输出 `name`、`source`、`description` 字段
+
 **探针设计**：
 
 - 使用 `--json-schema` 约束输出格式，确保返回结构化 JSON
 - 使用 `--max-turns 2` 限制最大轮数，防止模型无限制调用工具
 - 使用 `-y` 跳过确认提示
+- 超时时间 60 秒
 
 **合并逻辑**：
 
-- MCP 合并：以文件系统扫描为基准，用 headless 结果补充 `toolsCount` 和 `status` 字段
-- Skill 合并：以 headless 结果为权威来源（反映实际加载状态），用文件系统数据补充元信息（sourcePath、fileSizeBytes、estimatedTokens）。如果 headless 无数据，则标记所有 skill 为 `loaded: false`
+- **MCP 合并**（`mergeMcpLists`）：以文件系统扫描为基准，用 headless 结果补充 `toolsCount` 和 `status` 字段。headless 中不存在的 MCP 保留 fs 数据不变。
+
+- **Skill 合并**（`mergeSkillLists`）：以 headless 结果为**权威来源**（反映实际加载状态），用文件系统数据补充元信息（`sourcePath`、`fileSizeBytes`、`estimatedTokens`）。如果 headless 无数据（空数组），则标记所有 skill 为 `loaded: false`。
 
 **局限性**：
 
 - 模型可能汇报不完整或有误差
 - 无法拿到 system prompt 的实际内容
 - 无法获取真实的上下文分布
+- 每次探针调用消耗实际 Token
 
 **关键实现**：
 
@@ -127,17 +159,48 @@ POST /v2/chat/completions
 
 **扫描范围**：
 
-| 目标            | 路径                                              | 提取内容                                   |
-| --------------- | ------------------------------------------------- | ------------------------------------------ |
-| MCP 配置        | `~/.codebuddy/.mcp.json`                          | 服务器名、类型、状态、工具数估算           |
-| Settings        | `~/.codebuddy/settings.json`                      | 插件列表、Hook 配置、deferToolLoading 设置 |
-| Skills          | `~/.codebuddy/skills/`                            | 名称、来源、文件大小、Token 估算           |
-| 项目 Skills     | `.codebuddy/skills/`                              | 同上                                       |
-| 插件市场 Skills | `~/.codebuddy/plugins/marketplaces/`              | 仅已启用插件中的 skill                     |
-| Commands        | `~/.codebuddy/commands/` + `.codebuddy/commands/` | 作为类 skill 条目统计                      |
-| Rules           | `~/.codebuddy/rules/`                             | 规则名、是否 always-loaded、Token 估算     |
-| CODEBUDDY.md    | `~/.codebuddy/CODEBUDDY.md`                       | 大小、行数、Token 估算                     |
-| 历史文件        | `~/.codebuddy/history.jsonl`                      | 文件大小                                   |
+| 目标              | 路径                                              | 提取内容                                   |
+| ----------------- | ------------------------------------------------- | ------------------------------------------ |
+| MCP 配置          | `~/.codebuddy/.mcp.json`                          | 服务器名、类型、状态、工具数估算           |
+| Settings          | `~/.codebuddy/settings.json`                      | 插件列表、Hook 配置、deferToolLoading 设置 |
+| Skills            | `~/.codebuddy/skills/`                            | 名称、来源、文件大小、Token 估算           |
+| 项目 Skills       | `.codebuddy/skills/`                              | 同上                                       |
+| 插件市场 Skills   | `~/.codebuddy/plugins/marketplaces/`              | 仅已启用插件中的 skill                     |
+| Commands          | `~/.codebuddy/commands/` + `.codebuddy/commands/` | 作为类 skill 条目统计                      |
+| Rules             | `~/.codebuddy/rules/`                             | 规则名、是否 always-loaded、Token 估算     |
+| CODEBUDDY.md      | `~/.codebuddy/CODEBUDDY.md`                       | 大小、行数、Token 估算                     |
+| 项目 CODEBUDDY.md | `<cwd>/CODEBUDDY.md`                              | 同上                                       |
+| 历史文件          | `~/.codebuddy/history.jsonl`                      | 文件大小                                   |
+
+### MCP 数据来源（纯文件系统）
+
+文件系统扫描模式下，MCP 数据仅从 `~/.codebuddy/.mcp.json` 读取：
+
+- 解析 `mcpServers` 对象，每个 server 提取 `name`、`type`、`command`、`url`、`defer_loading`
+- 检查 `disabledMcpServers` 数组判断 `status`（`enabled` / `disabled`）
+- Token 估算基于配置 JSON 字符串长度（`estimateMcpTokens(null, configStr.length)`），因为此时没有 `toolsCount` 信息
+- 与 `MCP_CLI_ALTERNATIVES` 对照表比较，标记是否有 CLI 替代（`hasCliAlternative` / `cliAlternative`）
+- `toolsCount` 为 `null`（文件系统无法获取工具数）
+
+### CODEBUDDY.md 收集
+
+文件系统扫描收集**两个** CODEBUDDY.md 文件：
+
+1. **Global**：`~/.codebuddy/CODEBUDDY.md` — 用户级全局指令，每次会话都注入
+2. **Project**：`<cwd>/CODEBUDDY.md` — 项目级指令，仅在项目目录下的会话注入
+
+两者都通过 `summarizeFile()` 统计：大小（`sizeBytes`）、行数（`lineCount`）、Token 估算（`estimatedTokens`）、影响级别（`impactLevel`）。
+
+在 `buildContextOverview()` 中，两个 CODEBUDDY.md 都以 `type: 'memory-file'` 纳入 context 分解统计。
+
+在输出中，两者以完整路径区分：
+
+```
+配置文件
+----------------------------------------
+  /Users/xxx/.codebuddy/CODEBUDDY.md  2510B 66行 ~761tok [中]
+  /Users/xxx/project/CODEBUDDY.md     1024B 30行 ~310tok [低]
+```
 
 **关键设计**：
 
@@ -193,6 +256,18 @@ estimatedTokens = toolsCount * 200
 | medium | 1KB ~ 5KB | 有一定影响 |
 | high   | >= 5KB    | 显著影响   |
 
+## Context Overview 构建逻辑
+
+`buildContextOverview()` 在 headless 和 fs-only 模式下调用（proxy 模式直接使用 parser 结果）。它从以下数据源汇总 Token：
+
+| 来源        | type          | 数据                                                                 |
+| ----------- | ------------- | -------------------------------------------------------------------- |
+| mcpList     | `mcp-tools`   | 已启用 MCP 的 estimatedTokens                                        |
+| skillList   | `skill`       | 每个 skill 的 estimatedTokens                                        |
+| configFiles | `memory-file` | 存在的配置文件的 estimatedTokens（含 global + project CODEBUDDY.md） |
+
+注意：`settings.json` 是 CodeBuddy 自消费配置，不发送给 LLM API，不在 configFiles 中（`fs-collector.ts` 只收集 `codebuddyMd`、`projectCodebuddyMd`、`mcp` 三个文件）。
+
 ## 诊断报告结构
 
 `DiagnosisReport` 是诊断的最终输出，包含以下字段：
@@ -211,7 +286,7 @@ estimatedTokens = toolsCount * 200
   pluginList: PluginEntry[]      // 插件列表
   hookList: HookEntry[]          // Hook 列表
   ruleList: RuleEntry[]          // Rules 列表
-  configFiles: ConfigFileSummary[] // 配置文件摘要
+  configFiles: ConfigFileSummary[] // 配置文件摘要（含 global + project CODEBUDDY.md）
   toolDetection: ToolDetection[] // 省 Token 工具安装检测
   headlessAvailable: boolean     // 无头模式是否可用
   dataSource: 'proxy'|'headless'|'fs-only'  // 数据来源
@@ -254,28 +329,32 @@ estimatedTokens = toolsCount * 200
 
 ## 工具检测
 
-诊断同时检测 5 个省 Token 工具的安装状态：
+诊断同时检测 6 个省 Token 工具的安装状态：
 
-| 工具     | 类型   | 预估节省           | 检测方式                    |
-| -------- | ------ | ------------------ | --------------------------- |
-| rtk      | CLI    | ~89% 命令输出压缩  | `commandExists('rtk')`      |
-| caveman  | Plugin | 65-75% AI 回复压缩 | 检查 `enabledPlugins`       |
-| headroom | CLI    | 47-92% 上下文压缩  | `commandExists('headroom')` |
-| lean-ctx | CLI    | 60-90% 读取筛选    | `commandExists('lean-ctx')` |
-| graphify | CLI    | 71.5x 代码图谱     | `commandExists('graphify')` |
+| 工具     | 类型   | 预估节省                 | 检测方式                    |
+| -------- | ------ | ------------------------ | --------------------------- |
+| rtk      | CLI    | ~89% 命令输出压缩        | `commandExists('rtk')`      |
+| caveman  | Plugin | 65-75% AI 回复压缩       | 检查 `enabledPlugins`       |
+| headroom | CLI    | 47-92% 上下文压缩        | `commandExists('headroom')` |
+| lean-ctx | CLI    | 60-90% 读取筛选          | `commandExists('lean-ctx')` |
+| graphify | CLI    | 71.5x 代码图谱           | `commandExists('graphify')` |
+| ponytail | Plugin | 54% 代码量 + 20-75% 成本 | 检查 `enabledPlugins`       |
 
 检测结果直接写入 `toolDetection` 字段，后续 optimize 命令据此判断哪些工具需要安装。
 
 ## 架构关键决策
 
 1. **不逆向内部格式**：所有数据通过公开接口获取（文件系统 + `codebuddy -p` + Proxy 拦截），不解析 CodeBuddy 内部数据结构或通信协议
-2. **Proxy 优先，深度解析**：Proxy 模式能拿到实际发给 LLM 的完整 JSON，是最精确的数据源。Parser 对其深度解析：分解 messages、分类 tools（内置/MCP/延迟加载）、提取 skills/MCP/rules 引用
-3. **Tools 是大头**：实测 23 个内置工具约 20K tokens（占总请求 ~64%），工具定义是 Token 消耗最大的单项，诊断报告需要单独展示
-4. **降级不阻塞**：任何采集层失败时自动降级，保证诊断命令始终有输出
-5. **估算而非精确计数**：接受 Token 估算的误差范围（±10%），不追求无法获取的精确数据。字符数/4 是简单有效的近似
-6. **Skill loaded 状态依赖 Proxy/探针**：只有 Proxy 拦截或 headless 探针能判断 skill 是否"实际加载"，纯文件系统扫描无法区分
-7. **Commands 归入 Skill 统计**：与 CodeBuddy `/context` 的展示逻辑保持一致
-8. **settings.json 不计入 Token**：settings.json 是 CodeBuddy 自消费配置，不发送给 LLM API，不计入 contextOverview
+2. **文件系统扫描始终执行**：无论哪种数据源，`scanFilesystem()` 都会先运行，作为基础数据（pluginList、hookList、ruleList、configFiles 等都来自 fs）
+3. **Proxy 优先，深度解析**：Proxy 模式能拿到实际发给 LLM 的完整 JSON，是最精确的数据源。Parser 对其深度解析：分解 messages、分类 tools（内置/MCP/延迟加载）、提取 skills/MCP/rules 引用
+4. **Proxy 模式下 MCP/Skill 数据独立构建**：不使用 fs 或 headless 的数据，直接从请求体提取。MCP 通过 `buildMcpListFromProxy()` 从 toolDefinitions + mcpReferences 构建；Skill 从 `<available_skills>` 块提取实际加载项
+5. **Tools 是大头**：实测 23 个内置工具约 20K tokens（占总请求 ~64%），工具定义是 Token 消耗最大的单项，诊断报告需要单独展示
+6. **降级不阻塞**：任何采集层失败时自动降级，保证诊断命令始终有输出
+7. **估算而非精确计数**：接受 Token 估算的误差范围（±10%），不追求无法获取的精确数据。字符数/3.3 是简单有效的近似
+8. **Skill loaded 状态依赖 Proxy/探针**：只有 Proxy 拦截或 headless 探针能判断 skill 是否"实际加载"，纯文件系统扫描无法区分（标记为 `loaded: false`）
+9. **Commands 归入 Skill 统计**：与 CodeBuddy `/context` 的展示逻辑保持一致
+10. **settings.json 不计入 Token**：settings.json 是 CodeBuddy 自消费配置，不发送给 LLM API，不计入 contextOverview
+11. **双 CODEBUDDY.md 收集**：同时收集 `~/.codebuddy/CODEBUDDY.md` 和 `<cwd>/CODEBUDDY.md`，两者都会被注入到 Context 中，需分别估算 Token
 
 ## 相关 ADR
 

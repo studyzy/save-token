@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "headroom": {
+      "args": ["mcp", "serve"],
+      "print": true,
+      "command": "headroom",
+      "defer_loading": true,
+      "type": "stdio"
+    }
+  },
+  "disabledMcpServers": []
+}

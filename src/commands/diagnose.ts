@@ -4,6 +4,8 @@ import type {
   ContextItem,
   ToolDetection,
   SkillEntry,
+  McpEntry,
+  ProxyToolDef,
 } from '../types'
 import type { ToolId } from '../types'
 import { CodeBuddyAdapter } from '../adapters/codebuddy-adapter'
@@ -115,7 +117,7 @@ export async function runDiagnose(
         const builtin = proxyResult.parsed.builtinToolCount
         const mcp = proxyResult.parsed.mcpToolCount
         proxyContextItems.push({
-          name: `Tool definitions (${builtin}内置 + ${mcp}MCP)`,
+          name: `Tool definitions (${builtin}内置 + ${mcp}MCP工具)`,
           type: 'tool-definitions',
           estimatedTokens: proxyResult.parsed.toolDefinitionsTokens,
           source: 'proxy',
@@ -127,21 +129,38 @@ export async function runDiagnose(
         breakdown: proxyContextItems,
       }
 
-      // Merge proxy skill references with filesystem data for enriched info
-      const proxySkillNames = new Set(proxyResult.parsed.skillReferences)
-      const enrichedSkills = fs.skillList.map((s) => ({
-        ...s,
-        loaded: proxySkillNames.has(s.name) ? true : (s.loaded ?? false),
-      }))
+      // In proxy mode, only show skills that actually appear in the POST body.
+      // Skills present on disk but not in the Skill tool definition are not loaded
+      // and consume zero tokens — they should not be listed.
+      const skillTokens = proxyResult.parsed.skillTokens
+      const enrichedSkills: SkillEntry[] = []
+      for (const [name, tokenInfo] of Object.entries(skillTokens)) {
+        const fsSkill = fs.skillList.find((s) => s.name === name)
+        enrichedSkills.push({
+          name,
+          source: fsSkill?.source ?? 'user',
+          sourcePath: fsSkill?.sourcePath ?? '',
+          description: tokenInfo.description,
+          fileSizeBytes: fsSkill?.fileSizeBytes ?? 0,
+          estimatedTokens: tokenInfo.estimatedTokens,
+          loaded: true,
+        })
+      }
 
       const toolDetection = await detectTools(fs)
+
+      // Build mcpList from proxy: MCP tools from toolDefinitions + deferred references
+      const proxyMcpList: McpEntry[] = buildMcpListFromProxy(
+        proxyResult.parsed.toolDefinitions,
+        proxyResult.parsed.mcpReferences,
+      )
 
       const report: DiagnosisReport = {
         scanTimestamp: new Date().toISOString(),
         codebuddyVersion,
         platform,
         contextOverview,
-        mcpList,
+        mcpList: proxyMcpList,
         skillList: enrichedSkills,
         pluginList: fs.pluginList,
         hookList: fs.hookList,
@@ -223,6 +242,94 @@ async function getCodebuddyVersion(): Promise<string | null> {
     // ignore
   }
   return null
+}
+
+/**
+ * Build McpEntry list from proxy data.
+ *
+ * Two sources:
+ * 1. toolDefinitions (category='mcp') → non-deferred MCP tools with full schema
+ * 2. mcpReferences → deferred MCP server references (bare names from ToolSearch description)
+ *
+ * Groups by server prefix (e.g. mcp__headroom__headroom_compress → server: headroom).
+ */
+function buildMcpListFromProxy(
+  toolDefinitions: ProxyToolDef[],
+  mcpReferences: string[],
+): McpEntry[] {
+  const mcpTools = toolDefinitions.filter((t) => t.category === 'mcp')
+  if (mcpTools.length === 0 && mcpReferences.length === 0) return []
+
+  // Group by server: extract server name from mcp__SERVER or mcp__SERVER__toolName
+  const serverMap = new Map<
+    string,
+    {
+      toolCount: number
+      totalTokens: number
+      deferLoading: boolean
+      toolEntries: { name: string; estimatedTokens: number }[]
+    }
+  >()
+
+  // Non-deferred MCP tools (full schema in tools[])
+  for (const t of mcpTools) {
+    const parts = t.name.split('__')
+    const server = parts.length >= 2 ? parts[1] : t.name
+    const toolName = parts.length >= 3 ? parts.slice(2).join('__') : t.name
+    let entry = serverMap.get(server)
+    if (!entry) {
+      entry = { toolCount: 0, totalTokens: 0, deferLoading: false, toolEntries: [] }
+      serverMap.set(server, entry)
+    }
+    entry.toolCount++
+    entry.totalTokens += t.estimatedTokens
+    entry.toolEntries.push({ name: toolName, estimatedTokens: t.estimatedTokens })
+  }
+
+  // Deferred MCP references (bare names from ToolSearch description)
+  for (const ref of mcpReferences) {
+    const parts = ref.split('__')
+    // Server-level ref (mcp__SERVER) → just a reference, no concrete tools
+    if (parts.length === 2) {
+      const server = parts[1]
+      let entry = serverMap.get(server)
+      if (!entry) {
+        entry = { toolCount: 0, totalTokens: 0, deferLoading: true, toolEntries: [] }
+        serverMap.set(server, entry)
+      }
+      entry.totalTokens += Math.ceil(ref.length / 4)
+      if (mcpTools.length > 0) entry.deferLoading = false
+    }
+    // Tool-level deferred ref (mcp__SERVER__toolName) → concrete tool in deferred mode
+    if (parts.length >= 3) {
+      const server = parts[1]
+      const toolName = parts.slice(2).join('__')
+      let entry = serverMap.get(server)
+      if (!entry) {
+        entry = { toolCount: 0, totalTokens: 0, deferLoading: true, toolEntries: [] }
+        serverMap.set(server, entry)
+      }
+      entry.toolCount++
+      const tok = Math.ceil(ref.length / 4)
+      entry.totalTokens += tok
+      entry.toolEntries.push({ name: toolName, estimatedTokens: tok })
+    }
+  }
+
+  const result: McpEntry[] = []
+  for (const [server, entry] of serverMap) {
+    result.push({
+      name: server,
+      type: 'stdio',
+      status: 'enabled',
+      toolsCount: entry.toolCount > 0 ? entry.toolCount : null,
+      toolEntries: entry.toolEntries.length > 0 ? entry.toolEntries : undefined,
+      estimatedTokens: entry.totalTokens,
+      deferLoading: entry.deferLoading,
+    })
+  }
+
+  return result
 }
 
 function mergeMcpLists(

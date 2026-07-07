@@ -130,28 +130,34 @@ export function generateSuggestions(report: DiagnosisReport): OptimizationSugges
     })
   }
 
-  const codebuddyMd = report.configFiles.find((c) => c.path.endsWith('CODEBUDDY.md'))
-  if (codebuddyMd && codebuddyMd.exists && codebuddyMd.lineCount > 200) {
-    suggestions.push({
-      id: 'simplify-codebuddy-md',
-      type: 'habit_suggestion',
-      wasteCategory: 'structural',
-      target: 'CODEBUDDY.md',
-      reason: `CODEBUDDY.md ${codebuddyMd.lineCount} 行，建议精简`,
-      estimatedSavingTokens: Math.floor(codebuddyMd.estimatedTokens * 0.4),
-      estimatedSavingPercent: ((codebuddyMd.estimatedTokens * 0.4) / total) * 100,
-      risk: 'medium',
-      reversible: true,
-      actionType: 'simplify_codebuddy_md',
-      actionPayload: {},
-    })
+  // Check both global and project CODEBUDDY.md
+  const codebuddyMds = report.configFiles.filter((c) => c.path.endsWith('CODEBUDDY.md'))
+  for (const codebuddyMd of codebuddyMds) {
+    if (codebuddyMd.exists && codebuddyMd.lineCount > 200) {
+      const label = codebuddyMd.path.includes(process.cwd()) ? '项目 CODEBUDDY.md' : 'CODEBUDDY.md'
+      suggestions.push({
+        id: 'simplify-codebuddy-md',
+        type: 'habit_suggestion',
+        wasteCategory: 'structural',
+        target: codebuddyMd.path,
+        reason: `${label} ${codebuddyMd.lineCount} 行，建议精简`,
+        estimatedSavingTokens: Math.floor(codebuddyMd.estimatedTokens * 0.4),
+        estimatedSavingPercent: ((codebuddyMd.estimatedTokens * 0.4) / total) * 100,
+        risk: 'medium',
+        reversible: true,
+        actionType: 'simplify_codebuddy_md',
+        actionPayload: {},
+      })
+    }
   }
 
   // Cache instability detection — patterns that break Anthropic prefix caching
-  if (codebuddyMd?.path && exists(codebuddyMd.path)) {
-    const content = readFile(codebuddyMd.path)
-    if (content.length >= 200) {
-      suggestions.push(...detectCacheInstability(codebuddyMd.path, content, total))
+  for (const codebuddyMd of codebuddyMds) {
+    if (codebuddyMd?.path && exists(codebuddyMd.path)) {
+      const content = readFile(codebuddyMd.path)
+      if (content.length >= 200) {
+        suggestions.push(...detectCacheInstability(codebuddyMd.path, content, total))
+      }
     }
   }
 

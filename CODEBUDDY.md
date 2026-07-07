@@ -4,7 +4,7 @@ This file provides guidance to CodeBuddy Code when working with code in this rep
 
 ## 项目概述
 
-`save-token` 是 CodeBuddy Token 占用诊断与优化 CLI 工具。通过文件系统扫描 + `codebuddy -p` 无头模式自报，诊断 Token 占用、生成优化建议、自动安装省 Token 工具并优化配置。对外暴露的命令是 `st`。
+`save-token` 是 CodeBuddy Token 占用诊断与优化 CLI 工具。通过三层数据采集策略（Proxy 拦截 → headless 探针 → 文件系统扫描）诊断 Token 占用、生成优化建议、自动安装省 Token 工具并优化配置。对外暴露的命令是 `st`。
 
 ## 开发命令
 
@@ -29,9 +29,6 @@ pnpm test:run                     # vitest run（单次运行）
 pnpm test:coverage                # vitest run --coverage（含覆盖率报告）
 npx vitest run tests/commands/diagnose.test.ts  # 运行单个测试文件
 npx vitest run -t "test name"                    # 按名称筛选运行单个测试
-
-# 本地运行已构建的 CLI
-pnpm start                        # node bin/st.mjs
 ```
 
 ## 架构总览
@@ -39,33 +36,41 @@ pnpm start                        # node bin/st.mjs
 ### 入口与 CLI 层
 
 - `src/cli.ts` — CLI 入口，使用 `cac` 注册 `st` 命令
-- `src/cli-setup.ts` — 注册 diagnose / analyze / optimize / rollback / report 五个子命令，在注册前先调用 `initI18n(lang)`，语言由环境变量 `ST_LANG` 控制（默认 `zh-CN`）
+- `src/cli-setup.ts` — 注册 diagnose / analyze / optimize / rollback / report 五个子命令，支持 `--noHeadless` 跳过 headless/proxy 探测，在注册前先调用 `initI18n(lang)`，语言由环境变量 `ST_LANG` 控制（默认 `zh-CN`）
 
 ### 适配器模式（Adapter）
 
 - `src/adapters/platform-adapter.ts` — `PlatformAdapter` 接口定义：检测安装、获取配置路径、构建 headless 命令、解析输出。目前仅有 CodeBuddy 实现
-- `src/adapters/codebuddy-adapter.ts` — 唯一可用的实现，返回 `~/.codebuddy/` 下所有配置路径，headless 命令格式为 `codebuddy -p <prompt> --output-format json -y --max-turns 2`
+- `src/adapters/codebuddy-adapter.ts` — 唯一可用的实现，返回 `~/.codebuddy/` 下所有配置路径，headless 命令格式为 `codebuddy -p <prompt> --output-format json --json-schema '<schema>' -y --max-turns 2`
 - `src/adapters/claude-code-adapter.ts` 和 `src/adapters/codex-adapter.ts` — 空桩，未实现
 
 ### 命令层（Commands）
 
 5 个命令，都通过 `CodeBuddyAdapter` 获取平台信息：
 
-| 命令 | 文件 | 核心逻辑 |
-|------|------|----------|
-| `st diagnose` | `src/commands/diagnose.ts` | 文件扫描 + headless 探测 → 合并数据 → `DiagnosisReport` |
-| `st analyze` | `src/commands/analyze.ts` | 先 diagnose → 规则引擎生成建议 → 计算总节省 |
-| `st optimize` | `src/commands/optimize.ts` | diagnose → 生成建议 → dry-run 预览 / `--apply` 执行 |
-| `st rollback` | `src/commands/rollback.ts` | 从 `~/.codebuddy/.st-backup-*.json` 恢复 |
-| `st report` | `src/commands/report.ts` | diagnose + analyze → 写入 Markdown/JSON 报告文件 |
+| 命令          | 文件                       | 核心逻辑                                                                 |
+| ------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `st diagnose` | `src/commands/diagnose.ts` | 三层降级采集（proxy → headless → fs-only）→ 合并数据 → `DiagnosisReport` |
+| `st analyze`  | `src/commands/analyze.ts`  | 先 diagnose → 规则引擎生成建议 → 计算总节省                              |
+| `st optimize` | `src/commands/optimize.ts` | diagnose → 生成建议 → dry-run 预览 / `--apply` 执行                      |
+| `st rollback` | `src/commands/rollback.ts` | 从 `~/.codebuddy/.st-backup-*.json` 恢复                                 |
+| `st report`   | `src/commands/report.ts`   | diagnose + analyze → 写入 Markdown/JSON 报告文件                         |
 
-`diagnose` 的流程是先 `scanFilesystem()` 收集文件系统数据（MCP 配置、Skills、插件、Hooks、配置文件），再通过 `probe()` 调用 `codebuddy -p` 让模型自报实际加载的 MCP 和 Skill 列表，最后用 `mergeMcpLists()` / `mergeSkillLists()` 合并两套数据。
+`diagnose` 的数据采集按三层降级：Priority 1 — Proxy 拦截 `POST /v2/chat/completions` 请求体（最精确，能拿到实际发给 LLM 的完整 JSON）；Priority 2 — headless 探针让 AI 自报 MCP/Skill 列表；Priority 3 — 文件系统扫描 `~/.codebuddy/` 目录。失败时自动降级，保证始终有输出。`mergeMcpLists()` / `mergeSkillLists()` 合并 headless/fs 数据。
 
-### 数据采集层（Collectors）
+### 数据采��层（Collectors）
 
-- `src/collectors/fs-collector.ts` — `scanFilesystem(adapter)` 扫描 `~/.codebuddy/` 目录，返回 `FsCollectResult`（MCP 列表、Skill 列表、插件、Hooks、配置文件摘要）。Skill 扫描覆盖 user/project/marketplace/commands 四种来源
-- `src/collectors/headless-collector.ts` — `probe(adapter, prompt, schema)` 调用 `codebuddy -p` 获取 AI 自报数据。`probeAll()` 支持并行多探针
-- `src/collectors/token-estimator.ts` — Token 估算：`estimate(content)` = `Math.ceil(content.length / 4)`；MCP 按 200 token/工具估算
+数据采集诊断逻辑参考 `docs/architecture/003-diagnosis-principles.md`
+
+- `src/collectors/fs-collector.ts` — `scanFilesystem(adapter)` 扫描 `~/.codebuddy/` 目录，返回 `FsCollectResult`（MCP 列表、Skill 列表、插件、Hooks、Rules、CODEBUDDY.md、历史文件、配置文件摘要）。Skill 扫描覆盖 user/project/marketplace/commands 四种来源。Commands 作为类 skill 条目统计（与 `/context` 展示逻辑一致）。检测重复 skill（标记 `duplicateSource`）和 MCP CLI 替代（标记 `hasCliAlternative`）
+- `src/collectors/headless-collector.ts` — `probe(adapter, prompt, schema)` 调用 `codebuddy -p --json-schema` 获取 AI 自报数据。`probeAll()` 支持并行多探针（MCP 列表 + Skill 列表）
+- `src/collectors/proxy-collector.ts` — 协调整体 proxy 诊断流程：启动 Proxy → 执行探测命令 → 捕获请求体 → 恢复环境
+- `src/collectors/token-estimator.ts` — Token 估算：纯 ASCII 用 `Math.ceil(content.length / 3.3)`，混合 CJK 用 `Math.ceil(ASCII长度 / 3.3) + CJK字符数`，MCP 工具按 200 token/工具。文件影响级别：low（< 1KB）/ medium（1~5KB）/ high（>= 5KB）
+
+### Proxy 层
+
+- `src/proxy/server.ts` — 本地 HTTP 代理服务器，设置 `CODEBUDDY_BASE_URL` 后拦截 `POST /v2/*` 请求，透明转发到真实 API，捕获请求体
+- `src/proxy/parser.ts` — 深度解析捕获的请求体 JSON：分解 messages（按 role/block 统计）、分类 tools（内置/MCP/延迟加载）、提取 skills/MCP/rules 引用、Token 估算
 
 ### 分析层（Analyzers）
 
@@ -76,7 +81,7 @@ pnpm start                        # node bin/st.mjs
 
 - `src/executors/tool-installer.ts` — `installTool(toolId)` 通过 `tinyexec` 执行安装命令，支持 install → verify → config 三步流程
 - `src/executors/codebuddy-configurator.ts` — `applyConfigChange(suggestion)` 根据 actionType 操作 `~/.codebuddy/.mcp.json`（禁用 MCP/设置 defer_loading）和 `settings.json`（禁用插件/设置 deferToolLoading）
-- `src/executors/backup-manager.ts` — 优化前备份 MCP/Settings/CODEBUDDY.md 到 `.bak.<timestamp>`，支持列表/按时间戳恢复/恢复最新
+- `src/executors/backup-manager.ts` — 优化前备份 MCP/Settings/CODEBUDDY.md 到 `.st-backup-*.json`，支持列表/按时间戳恢复/恢复最新
 - `src/executors/diff-generator.ts` — diff 生成
 
 ### 工具层（Utils）
@@ -89,7 +94,7 @@ pnpm start                        # node bin/st.mjs
 
 ### 类型定义
 
-- `src/types/index.ts` — 所有核心类型：`DiagnosisReport`、`OptimizationSuggestion`、`ActionType`、`McpEntry`、`SkillEntry`、`PluginEntry`、`HookEntry`、`BackupRecord` 等。还包含 `MCP_CLI_ALTERNATIVES` 和 `LOW_FREQUENCY_PLUGINS` 两组运行时映射表
+- `src/types/index.ts` — 所有核心类型：`DiagnosisReport`、`OptimizationSuggestion`、`ActionType`、`McpEntry`、`SkillEntry`、`PluginEntry`、`HookEntry`、`RuleEntry`、`ConfigFileSummary`、`ToolDetection`、`ContextItem`、`BackupRecord`、`ProxyToolDef`、`ProxyMessageBlock` 等。还包含 `MCP_CLI_ALTERNATIVES` 和 `LOW_FREQUENCY_PLUGINS` 两组运行时映射表
 
 ### 国际化
 
@@ -100,7 +105,9 @@ pnpm start                        # node bin/st.mjs
 - **入口文件**：构建入口是 `src/cli`（`build.config.ts` 中 `entries: ['src/cli']`），输出到 `dist/cli.mjs`
 - **二进制命令**：`st` 指向 `bin/st.mjs`，该文件在 dist 中
 - **配置路径**：所有 CodeBuddy 配置路径硬编码在 `CodeBuddyAdapter.getConfigPaths()` 中，基于 `~/.codebuddy`
-- **Headless 探测**：核心机制是让 `codebuddy -p` 自己汇报当前环境状态，而非解析 CodeBuddy 内部格式
-- **Token 估算**：统一使用 `content.length / 4` 近似
+- **三层降级采集**：`st diagnose` 优先用 Proxy 拦截获取实际请求体（最精确），失败则用 headless 探针让 AI 自报，再失败用文件系统扫描保底。`dataSource` 字段标记最终使用的数据来源（`'proxy'` / `'headless'` / `'fs-only'`）
+- **不逆向内部格式**：所有数据通过公开接口获取（文件系统 + `codebuddy -p` + Proxy 拦截），不解析 CodeBuddy 内部数据结构或通信协议
+- **Token 估算**：纯 ASCII 用 `content.length / 3.3`，混合 CJK 用 `Math.ceil(ASCII长度 / 3.3) + CJK字符数`，MCP 按 200 token/工具。Tools 定义是 Token 消耗最大单项（实测 23 个内置工具约 20K tokens，占总量 ~64%）
 - **优化前备份**：所有 `st optimize --apply` 操作在执行前会自动备份被修改的配置文件
 - **路径别名**：`@` → `./src`（vitest.config.ts 和测试中使用）
+- **settings.json 不计入 Token**：settings.json 是 CodeBuddy 自消费配置，不发送给 LLM API
