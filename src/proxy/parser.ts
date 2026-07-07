@@ -197,7 +197,10 @@ export function parseProxyBody(body: unknown): ProxyDiagnosisData {
     }
   }
 
-  // --- Skill token breakdown from Skill tool definition ---
+  // --- Plugin detection via proxy body markers ---
+  const detectedPlugins = detectPluginsFromMessages(messages)
+
+  // --- Skill tokens from Skill tool definition ---
   const skillTokens = extractSkillTokens(tools)
 
   const builtinToolCount = toolDefinitions.filter((t) => t.category === 'builtin').length
@@ -222,6 +225,7 @@ export function parseProxyBody(body: unknown): ProxyDiagnosisData {
     skillReferences,
     skillTokens,
     mcpReferences,
+    detectedPlugins,
     model,
   }
 }
@@ -292,6 +296,28 @@ function extractSkillTokens(
   }
 
   return result
+}
+
+/**
+ * Detect plugins active in the request body via mode markers in message content.
+ * Scans all messages for known activation patterns (e.g. "PONYTAIL MODE ACTIVE").
+ */
+function detectPluginsFromMessages(messages: ChatMessage[]): string[] {
+  const markers: Record<string, string> = {
+    ponytail: 'PONYTAIL MODE ACTIVE',
+  }
+  const detected: string[] = []
+
+  for (const msg of messages) {
+    const content = typeof msg.content === 'string' ? msg.content : ''
+    for (const [plugin, marker] of Object.entries(markers)) {
+      if (!detected.includes(plugin) && content.includes(marker)) {
+        detected.push(plugin)
+      }
+    }
+  }
+
+  return detected
 }
 
 /**

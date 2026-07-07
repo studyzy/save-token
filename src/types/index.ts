@@ -282,6 +282,8 @@ export interface ProxyDiagnosisData {
   /** Per-skill token breakdown parsed from Skill tool definition (available_skills block). */
   skillTokens: Record<string, { description: string; estimatedTokens: number }>
   mcpReferences: string[]
+  /** Plugins detected via proxy body markers (e.g. "PONYTAIL MODE ACTIVE"). */
+  detectedPlugins: string[]
   model: string
 }
 

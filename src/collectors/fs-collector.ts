@@ -57,7 +57,7 @@ export function scanFilesystem(adapter: PlatformAdapter): FsCollectResult {
 
   const mcpList = scanMcpConfig(paths.mcp)
   const settings = readSettings(paths.settings)
-  const pluginList = scanPlugins(settings)
+  const pluginList = scanPlugins(settings, paths.pluginsMarketplacesDir)
   const hookList = scanHooks(settings)
   const skillList = scanSkills(paths.skillsDir, 'user')
   const projectSkills = scanSkills(`${process.cwd()}/.codebuddy/skills`, 'project')
@@ -171,10 +171,14 @@ function readSettings(path: string): SettingsFile {
   return readJsonSafe<SettingsFile>(path) ?? {}
 }
 
-function scanPlugins(settings: SettingsFile): PluginEntry[] {
+function scanPlugins(settings: SettingsFile, configDir: string): PluginEntry[] {
   const entries: PluginEntry[] = []
+  const seen = new Set<string>()
+
+  // From enabledPlugins
   for (const [id, enabled] of Object.entries(settings.enabledPlugins ?? {})) {
     const [pluginId, marketplace] = id.split('@')
+    seen.add(pluginId ?? id)
     entries.push({
       id,
       pluginId: pluginId ?? id,
@@ -184,6 +188,28 @@ function scanPlugins(settings: SettingsFile): PluginEntry[] {
       isLowFrequency: LOW_FREQUENCY_PLUGINS.has(id),
     })
   }
+
+  // From marketplace directories — catch plugins installed but not in enabledPlugins
+  const marketplacesDir = `${configDir}/plugins/marketplaces`
+  try {
+    const dirs = readDir(marketplacesDir)
+    for (const dir of dirs) {
+      if (seen.has(dir)) continue
+      const fullPath = `${marketplacesDir}/${dir}`
+      if (!isDirectory(fullPath)) continue
+      entries.push({
+        id: dir,
+        pluginId: dir,
+        marketplace: 'installed',
+        enabled: true, // directory present = active
+        installedPath: fullPath,
+        isLowFrequency: LOW_FREQUENCY_PLUGINS.has(dir),
+      })
+    }
+  } catch {
+    // marketplaces directory doesn't exist — skip
+  }
+
   return entries
 }
 

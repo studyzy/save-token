@@ -6,6 +6,7 @@ import type {
   SkillEntry,
   McpEntry,
   ProxyToolDef,
+  ProxyDiagnosisData,
 } from '../types'
 import type { ToolId } from '../types'
 import { CodeBuddyAdapter } from '../adapters/codebuddy-adapter'
@@ -147,7 +148,19 @@ export async function runDiagnose(
         })
       }
 
-      const toolDetection = await detectTools(fs)
+      const toolDetection = await detectTools(fs, proxyResult.parsed)
+
+      // Ponytail detection from proxy body markers
+      if (proxyResult.parsed.detectedPlugins.includes('ponytail')) {
+        const idx = toolDetection.findIndex((t) => t.name === 'ponytail')
+        if (idx !== -1 && !toolDetection[idx].installed) {
+          toolDetection[idx] = {
+            ...toolDetection[idx],
+            installed: true,
+            codebuddyIntegrated: true,
+          }
+        }
+      }
 
       // Build mcpList from proxy: MCP tools from toolDefinitions + deferred references
       const proxyMcpList: McpEntry[] = buildMcpListFromProxy(
@@ -326,6 +339,8 @@ function buildMcpListFromProxy(
       toolEntries: entry.toolEntries.length > 0 ? entry.toolEntries : undefined,
       estimatedTokens: entry.totalTokens,
       deferLoading: entry.deferLoading,
+      source: 'user',
+      hasCliAlternative: false,
     })
   }
 
@@ -411,7 +426,10 @@ function buildContextOverview(
   return { totalEstimatedTokens: total, breakdown: items }
 }
 
-async function detectTools(fs: ReturnType<typeof scanFilesystem>): Promise<ToolDetection[]> {
+async function detectTools(
+  fs: ReturnType<typeof scanFilesystem>,
+  proxyParsed?: ProxyDiagnosisData,
+): Promise<ToolDetection[]> {
   const tools: Array<{ id: ToolId; saving: string; type: 'cli' | 'plugin' }> = [
     { id: 'rtk', saving: '~89% 命令输出压缩', type: 'cli' },
     { id: 'caveman', saving: '65-75% AI 回复压缩', type: 'plugin' },
@@ -426,9 +444,15 @@ async function detectTools(fs: ReturnType<typeof scanFilesystem>): Promise<ToolD
     let codebuddyIntegrated = false
 
     if (t.type === 'plugin') {
-      // Check if plugin exists in enabledPlugins or its marketplace directory
+      // Check plugin: marketplace directory exists OR enabledPlugins entry OR proxy-detected
       const plugin = fs.pluginList.find((p) => p.pluginId === t.id)
-      installed = !!plugin?.enabled
+      const hasMarketplaceDir = await checkPluginMarketplaceDir(t.id)
+      const hasEnabledEntry = !!plugin?.enabled
+      installed = hasMarketplaceDir || hasEnabledEntry
+      // Proxy detection: scan all message content for mode-active markers
+      if (!installed && proxyParsed) {
+        installed = proxyDetectPlugin(t.id, proxyParsed)
+      }
       codebuddyIntegrated = installed
     } else {
       // Check CLI binary on PATH
@@ -446,4 +470,26 @@ async function detectTools(fs: ReturnType<typeof scanFilesystem>): Promise<ToolD
     })
   }
   return results
+}
+
+/** Check if plugin marketplace directory exists under ~/.codebuddy/plugins/marketplaces/ */
+async function checkPluginMarketplaceDir(pluginId: string): Promise<boolean> {
+  const { exists: fileExists } = await import('../utils/fs-operations')
+  return fileExists(`${process.env.HOME}/.codebuddy/plugins/marketplaces/${pluginId}/`)
+}
+
+/**
+ * Detect plugin activation from proxy-captured request body.
+ * Scans all message content for mode-active markers (e.g. "PONYTAIL MODE ACTIVE").
+ */
+function proxyDetectPlugin(pluginId: string, parsed: ProxyDiagnosisData): boolean {
+  const markers: Record<string, string> = {
+    ponytail: 'PONYTAIL MODE ACTIVE',
+  }
+  const marker = markers[pluginId]
+  if (!marker) return false
+  for (const block of parsed.messageBreakdown) {
+    if (block.snippet.includes(marker)) return true
+  }
+  return false
 }
