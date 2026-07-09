@@ -1,0 +1,18 @@
+{
+  "name": "save-token-marketplace",
+  "version": "1.0.0",
+  "description": "CodeBuddy Token 占用诊断与优化工具的官方插件市场",
+  "owner": {
+    "name": "studyzy",
+    "email": "studyzy@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "save-token",
+      "source": "./plugins/save-token",
+      "description": "CodeBuddy Token 占用诊断与优化工具。诊断 MCP/Skill/Plugin/Rules 的 Token 消耗，生成优化建议，一键应用优化。",
+      "version": "1.0.0",
+      "strict": false
+    }
+  ]
+}
