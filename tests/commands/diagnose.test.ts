@@ -7,6 +7,7 @@ vi.mock('../../src/utils/platform', () => ({
   commandExists: vi.fn(),
   getPlatform: vi.fn(() => 'macos'),
   isWindows: vi.fn(() => false),
+  isProcessRunning: vi.fn(() => Promise.resolve(false)),
 }))
 
 import { runDiagnose } from '../../src/commands/diagnose'

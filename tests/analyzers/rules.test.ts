@@ -1,26 +1,29 @@
 import { describe, it, expect } from 'vitest'
-import { TOOL_SPECS, TOOL_SAVINGS, TOOL_REASONS, THRESHOLDS } from '../../src/analyzers/rules'
+import { TOOL_SAVINGS, TOOL_REASONS, THRESHOLDS } from '../../src/analyzers/rules'
+import { getAllTools } from '../../src/tools'
 
 describe('rules', () => {
   it('should define specs for all 6 tools', () => {
-    expect(Object.keys(TOOL_SPECS)).toHaveLength(6)
-    expect(TOOL_SPECS.rtk).toBeDefined()
-    expect(TOOL_SPECS.caveman).toBeDefined()
-    expect(TOOL_SPECS.headroom).toBeDefined()
-    expect(TOOL_SPECS['lean-ctx']).toBeDefined()
-    expect(TOOL_SPECS.graphify).toBeDefined()
-    expect(TOOL_SPECS.ponytail).toBeDefined()
+    const tools = getAllTools()
+    expect(tools).toHaveLength(6)
+    const names = new Set(tools.map((t) => t.name))
+    expect(names.has('rtk')).toBe(true)
+    expect(names.has('caveman')).toBe(true)
+    expect(names.has('headroom')).toBe(true)
+    expect(names.has('lean-ctx')).toBe(true)
+    expect(names.has('graphify')).toBe(true)
+    expect(names.has('ponytail')).toBe(true)
   })
 
   it('should have install commands', () => {
-    for (const id of Object.keys(TOOL_SPECS) as Array<keyof typeof TOOL_SPECS>) {
-      expect(TOOL_SPECS[id].installCommand.length).toBeGreaterThan(0)
+    for (const tool of getAllTools()) {
+      expect(tool.installCommand.length).toBeGreaterThan(0)
     }
   })
 
   it('should have verify commands', () => {
-    for (const id of Object.keys(TOOL_SPECS) as Array<keyof typeof TOOL_SPECS>) {
-      expect(TOOL_SPECS[id].verifyCommand.length).toBeGreaterThan(0)
+    for (const tool of getAllTools()) {
+      expect(tool.verifyCommand.length).toBeGreaterThan(0)
     }
   })
 

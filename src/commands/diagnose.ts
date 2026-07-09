@@ -8,7 +8,6 @@ import type {
   ProxyToolDef,
   ProxyDiagnosisData,
 } from '../types'
-import type { ToolId } from '../types'
 import { CodeBuddyAdapter } from '../adapters/codebuddy-adapter'
 import { scanFilesystem } from '../collectors/fs-collector'
 import { probe } from '../collectors/headless-collector'
@@ -19,15 +18,17 @@ import {
   SKILL_LIST_PROMPT,
   SKILL_LIST_SCHEMA,
 } from '../utils/prompt-templates'
-import { commandExists, getPlatform, isProcessRunning } from '../utils/platform'
-import path from 'node:path'
+import { getPlatform } from '../utils/platform'
 import { exec } from 'tinyexec'
 import { printDiagnosisReport } from '../utils/output'
-import { writeFile, exists } from '../utils/fs-operations'
+import { writeFile } from '../utils/fs-operations'
 import { handleExitPromptError, handleGeneralError } from '../utils/error-handler'
 import { writeResource } from '../utils/resource-dir'
 import { i18n } from '../i18n'
 import { createLogger } from '../utils/debug-logger'
+import { getAllTools } from '../tools'
+import { headroomTool } from '../tools/impl/headroom'
+import { ponytailTool } from '../tools/impl/ponytail'
 
 const log = createLogger('diagnose')
 
@@ -168,19 +169,7 @@ export async function runDiagnose(
         })
       }
 
-      const toolDetection = await detectTools(fs, proxyResult.parsed)
-
-      // Ponytail detection from proxy body markers
-      if (proxyResult.parsed.detectedPlugins.includes('ponytail')) {
-        const idx = toolDetection.findIndex((t) => t.name === 'ponytail')
-        if (idx !== -1 && !toolDetection[idx].installed) {
-          toolDetection[idx] = {
-            ...toolDetection[idx],
-            installed: true,
-            codebuddyIntegrated: true,
-          }
-        }
-      }
+      const toolDetection = await detectToolsViaRegistry(fs, proxyResult.parsed)
 
       // Build mcpList from proxy: MCP tools from toolDefinitions + deferred references
       const proxyMcpList: McpEntry[] = buildMcpListFromProxy(
@@ -218,7 +207,10 @@ export async function runDiagnose(
           mcpReferences: proxyResult.parsed.mcpReferences,
         },
       }
-      writeResource('diagnosis-report.json', report)
+      writeResource('diagnosis-report.json', {
+        ...report,
+        toolDetection: toolDetection.filter((t) => t.installed),
+      })
 
       return { report, rawBody }
     }
@@ -262,7 +254,7 @@ export async function runDiagnose(
   }
 
   const contextOverview = buildContextOverview(fs, mcpList, skillList)
-  const toolDetection = await detectTools(fs)
+  const toolDetection = await detectToolsViaRegistry(fs, null)
 
   log(
     'Diagnosis complete, dataSource=%s, totalTokens=%d',
@@ -293,7 +285,10 @@ export async function runDiagnose(
       hasLargeDocs: false,
     },
   }
-  writeResource('diagnosis-report.json', report)
+  writeResource('diagnosis-report.json', {
+    ...report,
+    toolDetection: toolDetection.filter((t) => t.installed),
+  })
 
   return { report, rawBody }
 }
@@ -479,74 +474,40 @@ function buildContextOverview(
   return { totalEstimatedTokens: total, breakdown: items }
 }
 
-async function detectTools(
+/**
+ * Tool detection via SaveTokenTool registry.
+ * Each tool self-registers and provides detect() + isEnabled() logic.
+ */
+async function detectToolsViaRegistry(
   fs: ReturnType<typeof scanFilesystem>,
-  proxyParsed?: ProxyDiagnosisData,
+  proxyParsed: ProxyDiagnosisData | null,
 ): Promise<ToolDetection[]> {
-  const tools: Array<{ id: ToolId; saving: string; type: 'cli' | 'plugin' }> = [
-    { id: 'rtk', saving: '~89% 命令输出压缩', type: 'cli' },
-    { id: 'caveman', saving: '65-75% AI 回复压缩', type: 'plugin' },
-    { id: 'headroom', saving: '47-92% 上下文压缩', type: 'cli' },
-    { id: 'lean-ctx', saving: '60-90% 读取筛选', type: 'cli' },
-    { id: 'graphify', saving: '71.5x 代码图谱', type: 'cli' },
-    { id: 'ponytail', saving: '54% 代码量 + 20-75% 成本', type: 'plugin' },
-  ]
+  const detections = await Promise.all(getAllTools().map((t) => t.buildDetection()))
 
-  // Enable detection helpers
-  const isRtkEnabled = fs.hookList.some(
-    (h) => h.event === 'PreToolUse' && h.command?.includes('rtk'),
-  )
-  const proxyPlugins = proxyParsed?.detectedPlugins ?? []
+  // RTK enabled detection via hook
+  const hasRtkHook = fs.hookList.some((h) => h.event === 'PreToolUse' && h.command?.includes('rtk'))
+  if (hasRtkHook) {
+    const rtkDet = detections.find((d) => d.name === 'rtk')
+    if (rtkDet) rtkDet.enabled = true
+  }
 
-  const results: ToolDetection[] = []
-  for (const t of tools) {
-    let installed = false
-    let codebuddyIntegrated = false
-    let enabled = false
-
-    if (t.type === 'plugin') {
-      const plugin = fs.pluginList.find((p) => p.pluginId === t.id)
-      const hasMarketplaceDir = await checkPluginMarketplaceDir(t.id)
-      const hasEnabledEntry = !!plugin?.enabled
-      const hasProxyMarker = proxyPlugins.includes(t.id)
-      installed = hasMarketplaceDir || hasEnabledEntry || hasProxyMarker
-      codebuddyIntegrated = installed
-      // Plugins are enabled once installed (CodeBuddy loads all installed plugins).
-      // Proxy marker only contributes to installed detection above.
-      enabled = installed
-    } else {
-      installed = await commandExists(t.id)
-      codebuddyIntegrated = installed
-      if (t.id === 'rtk') {
-        enabled = installed && isRtkEnabled
-      } else if (t.id === 'graphify') {
-        enabled = installed && exists(path.join(process.cwd(), 'graphify-out'))
-      } else if (t.id === 'headroom') {
-        const mcpEnabledFs = fs.mcpList.some((m) => m.name === 'headroom' && m.status === 'enabled')
-        const mcpEnabledProxy = !!proxyParsed?.mcpReferences.some((r) => r === 'mcp__headroom')
-        const mcpEnabled = mcpEnabledFs || mcpEnabledProxy
-        const processRunning = await isProcessRunning('headroom')
-        enabled = installed && mcpEnabled && processRunning
-      } else {
-        enabled = false
-      }
+  // Headroom enabled detection via MCP
+  if (proxyParsed) {
+    const mcpEnabled =
+      fs.mcpList.some((m) => m.name === 'headroom' && m.status === 'enabled') ||
+      proxyParsed.mcpReferences?.some((r: string) => r === 'mcp__headroom')
+    if (mcpEnabled) {
+      headroomTool.setMcpEnabled(true)
+      const hIdx = detections.findIndex((d) => d.name === 'headroom')
+      if (hIdx !== -1) detections[hIdx] = await headroomTool.buildDetection()
     }
 
-    results.push({
-      name: t.id,
-      installed,
-      enabled,
-      version: null,
-      installPath: null,
-      codebuddyIntegrated,
-      recommendedSaving: t.saving,
-    })
+    // Ponytail proxy marker override
+    if (proxyParsed.detectedPlugins?.includes('ponytail')) {
+      const pIdx = detections.findIndex((d) => d.name === 'ponytail')
+      if (pIdx !== -1) detections[pIdx] = ponytailTool.markInstalledFromProxy(detections[pIdx])
+    }
   }
-  return results
-}
 
-/** Check if plugin marketplace directory exists under ~/.codebuddy/plugins/marketplaces/ */
-async function checkPluginMarketplaceDir(pluginId: string): Promise<boolean> {
-  const { exists: fileExists } = await import('../utils/fs-operations')
-  return fileExists(`${process.env.HOME}/.codebuddy/plugins/marketplaces/${pluginId}/`)
+  return detections
 }

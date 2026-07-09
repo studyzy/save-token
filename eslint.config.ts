@@ -24,6 +24,7 @@ export default tseslint.config(
       'src/utils/output.ts',
       'src/commands/trace.ts',
       'src/commands/optimize.ts',
+      'src/commands/analyze.ts',
       'src/commands/report.ts',
       'src/commands/rollback.ts',
       'src/utils/error-handler.ts',

@@ -1,5 +1,5 @@
 import type { ToolId, ToolInstallResult } from '../types'
-import { TOOL_SPECS } from '../analyzers/rules'
+import { getTool } from '../tools'
 import { commandExists } from '../utils/platform'
 import { exec } from 'tinyexec'
 
@@ -8,7 +8,15 @@ import { exec } from 'tinyexec'
  * Steps: check not already installed → run install → verify → run config command.
  */
 export async function installTool(toolId: ToolId): Promise<ToolInstallResult> {
-  const spec = TOOL_SPECS[toolId]
+  const tool = getTool(toolId)
+  if (!tool) {
+    return {
+      toolId,
+      success: false,
+      error: `unknown tool: ${toolId}`,
+      configChanges: [],
+    }
+  }
 
   // ponytail is installed via codebuddy plugin, not a system binary
   if (toolId === 'ponytail') {
@@ -21,7 +29,7 @@ export async function installTool(toolId: ToolId): Promise<ToolInstallResult> {
         installOutput: 'already installed',
       }
     }
-    return installPlugin(toolId, spec)
+    return installPlugin(toolId, tool)
   }
 
   const alreadyInstalled = await commandExists(toolId)
@@ -34,7 +42,7 @@ export async function installTool(toolId: ToolId): Promise<ToolInstallResult> {
     }
   }
 
-  return installWithSpec(toolId, spec)
+  return installWithSpec(toolId, tool)
 }
 
 async function installWithSpec(

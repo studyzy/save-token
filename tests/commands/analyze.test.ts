@@ -7,6 +7,14 @@ vi.mock('../../src/utils/platform', () => ({
   commandExists: vi.fn(),
   getPlatform: vi.fn(() => 'macos'),
   isWindows: vi.fn(() => false),
+  isProcessRunning: vi.fn(() => Promise.resolve(false)),
+}))
+vi.mock('../../src/utils/llm-analyzer', () => ({
+  callLlmForRemovalAdvice: vi.fn(() => Promise.resolve([])),
+  fallbackRemovalSuggestions: vi.fn(() => []),
+}))
+vi.mock('../../src/utils/scenario-prompt', () => ({
+  askScenario: vi.fn(() => Promise.resolve('general')),
 }))
 
 import { analyze } from '../../src/commands/analyze'
@@ -41,7 +49,10 @@ describe('analyze command', () => {
     await analyze({ noHeadless: true, format: 'json' })
 
     expect(logs.length).toBeGreaterThan(0)
-    const json = JSON.parse(logs[0]) as Record<string, unknown>
+    // Find the JSON output line (first line starting with '{')
+    const jsonLine = logs.find((l) => l.trimStart().startsWith('{'))
+    expect(jsonLine).toBeDefined()
+    const json = JSON.parse(jsonLine!) as Record<string, unknown>
     expect(json).toHaveProperty('suggestions')
     expect(json).toHaveProperty('totalEstimatedSaving')
     expect(json).toHaveProperty('totalPercent')

@@ -14,6 +14,9 @@ import {
 } from '../analyzers/rules'
 import { readFile, exists } from '../utils/fs-operations'
 import { estimate } from '../collectors/token-estimator'
+import { getTool, getToolIds } from '../tools'
+
+const ALL_TOOLS: ToolId[] = getToolIds() as ToolId[]
 
 export function generateSuggestions(
   report: DiagnosisReport,
@@ -34,24 +37,25 @@ export function generateSuggestions(
     recommendedTools.add('graphify')
   }
 
-  // Tool installation suggestions — filtered by scenario
-  for (const tool of report.toolDetection) {
-    if (!tool.installed && recommendedTools.has(tool.name)) {
+  // Tool installation suggestions — from hardcoded ALL_TOOLS, minus already installed
+  const installedNames = new Set(report.toolDetection.map((t) => t.name))
+  for (const toolName of ALL_TOOLS) {
+    if (!installedNames.has(toolName) && recommendedTools.has(toolName)) {
       suggestions.push({
-        id: `install-${tool.name}`,
+        id: `install-${toolName}`,
         type: 'install_tool',
         wasteCategory: 'runtime',
-        target: tool.name,
-        reason: TOOL_REASONS[tool.name],
-        estimatedSavingTokens: TOOL_SAVINGS[tool.name],
-        estimatedSavingPercent: (TOOL_SAVINGS[tool.name] / total) * 100,
+        target: toolName,
+        reason: TOOL_REASONS[toolName],
+        estimatedSavingTokens: TOOL_SAVINGS[toolName],
+        estimatedSavingPercent: (TOOL_SAVINGS[toolName] / total) * 100,
         risk: 'low',
         reversible: true,
-        actionType: getInstallAction(tool.name),
+        actionType: getInstallAction(toolName),
         actionPayload: {
-          installCommand: getInstallCommand(tool.name),
-          verifyCommand: getVerifyCommand(tool.name),
-          configCommand: getConfigCommand(tool.name),
+          installCommand: getTool(toolName)?.installCommand ?? '',
+          verifyCommand: getTool(toolName)?.verifyCommand ?? '',
+          configCommand: getTool(toolName)?.configCommand ?? '',
         },
       })
     }
@@ -139,6 +143,25 @@ export function generateSuggestions(
   // Skill/Plugin removal suggestions are now handled by LLM (callLlmForRemovalAdvice).
   // Keep only structural warnings that are not scenario-dependent.
 
+  // Low-frequency plugin disabling (rule-based fallback)
+  for (const plugin of report.pluginList) {
+    if (plugin.enabled && plugin.isLowFrequency) {
+      suggestions.push({
+        id: `disable-plugin-${plugin.pluginId}`,
+        type: 'config_change',
+        wasteCategory: 'structural',
+        target: plugin.id,
+        reason: `低频插件 ${plugin.pluginId}，建议禁用`,
+        estimatedSavingTokens: 0,
+        estimatedSavingPercent: 0,
+        risk: 'low',
+        reversible: true,
+        actionType: 'disable_plugin',
+        actionPayload: {},
+      })
+    }
+  }
+
   if (report.skillList.length > 10) {
     suggestions.push({
       id: 'skill-count-warning',
@@ -214,57 +237,6 @@ export function generateSuggestions(
 
 function getInstallAction(tool: ToolId): OptimizationSuggestion['actionType'] {
   return `install_${tool}` as OptimizationSuggestion['actionType']
-}
-
-function getInstallCommand(tool: ToolId): string {
-  switch (tool) {
-    case 'rtk':
-      return 'brew install rtk && rtk init -g --agent codebuddy'
-    case 'caveman':
-      return 'git clone https://github.com/studyzy/caveman /tmp/caveman && cd /tmp/caveman && ./install.sh'
-    case 'headroom':
-      return 'pip install "headroom-ai[all]" && headroom mcp install'
-    case 'lean-ctx':
-      return 'brew install lean-ctx && lean-ctx setup'
-    case 'graphify':
-      return 'uv tool install graphifyy && graphify install --platform codebuddy'
-    case 'ponytail':
-      return 'codebuddy plugin marketplace add https://github.com/studyzy/ponytail'
-  }
-}
-
-function getVerifyCommand(tool: ToolId): string {
-  switch (tool) {
-    case 'rtk':
-      return 'rtk gain'
-    case 'caveman':
-      return 'ls ~/.codebuddy/plugins/marketplaces/caveman/'
-    case 'headroom':
-      return 'headroom --version'
-    case 'lean-ctx':
-      return 'lean-ctx doctor'
-    case 'graphify':
-      return 'graphify --version'
-    case 'ponytail':
-      return 'ls ~/.codebuddy/plugins/marketplaces/ponytail/'
-  }
-}
-
-function getConfigCommand(tool: ToolId): string {
-  switch (tool) {
-    case 'rtk':
-      return 'rtk init -g --agent codebuddy'
-    case 'caveman':
-      return ''
-    case 'headroom':
-      return 'headroom mcp install'
-    case 'lean-ctx':
-      return 'lean-ctx setup'
-    case 'graphify':
-      return 'graphify install --platform codebuddy'
-    case 'ponytail':
-      return ''
-  }
 }
 
 // ── Cache instability detection ──────────────────────────────────────────
