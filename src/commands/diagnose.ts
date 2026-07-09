@@ -438,31 +438,41 @@ async function detectTools(
     { id: 'graphify', saving: '71.5x 代码图谱', type: 'cli' },
     { id: 'ponytail', saving: '54% 代码量 + 20-75% 成本', type: 'plugin' },
   ]
+
+  // Enable detection helpers
+  const isRtkEnabled = fs.hookList.some(
+    (h) => h.event === 'PreToolUse' && h.command?.includes('rtk'),
+  )
+  const proxyPlugins = proxyParsed?.detectedPlugins ?? []
+
   const results: ToolDetection[] = []
   for (const t of tools) {
     let installed = false
     let codebuddyIntegrated = false
+    let enabled = false
 
     if (t.type === 'plugin') {
-      // Check plugin: marketplace directory exists OR enabledPlugins entry OR proxy-detected
       const plugin = fs.pluginList.find((p) => p.pluginId === t.id)
       const hasMarketplaceDir = await checkPluginMarketplaceDir(t.id)
       const hasEnabledEntry = !!plugin?.enabled
       installed = hasMarketplaceDir || hasEnabledEntry
-      // Proxy detection: scan all message content for mode-active markers
       if (!installed && proxyParsed) {
         installed = proxyDetectPlugin(t.id, proxyParsed)
       }
       codebuddyIntegrated = installed
+      // Plugin enabled if installed (CodeBuddy loads all installed plugins)
+      // Proxy-detected plugins take priority when available
+      enabled = installed && (proxyPlugins.includes(t.id) || !proxyParsed)
     } else {
-      // Check CLI binary on PATH
       installed = await commandExists(t.id)
       codebuddyIntegrated = installed
+      enabled = installed && t.id === 'rtk' ? isRtkEnabled : false
     }
 
     results.push({
       name: t.id,
       installed,
+      enabled,
       version: null,
       installPath: null,
       codebuddyIntegrated,

@@ -120,6 +120,7 @@ export interface ConfigFileSummary {
 export interface ToolDetection {
   name: ToolId
   installed: boolean
+  enabled: boolean
   version: string | null
   installPath: string | null
   codebuddyIntegrated: boolean

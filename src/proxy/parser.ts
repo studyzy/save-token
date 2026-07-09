@@ -304,6 +304,7 @@ function extractSkillTokens(
  */
 function detectPluginsFromMessages(messages: ChatMessage[]): string[] {
   const markers: Record<string, string> = {
+    caveman: 'CAVEMAN MODE ACTIVE',
     ponytail: 'PONYTAIL MODE ACTIVE',
   }
   const detected: string[] = []

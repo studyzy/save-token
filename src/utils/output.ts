@@ -201,15 +201,17 @@ function renderDiagnosisTerminal(report: DiagnosisReport): string {
       `  ${cfg.path}  ${cfg.sizeBytes}B ${cfg.lineCount}行 ~${cfg.estimatedTokens}tok ${level}`,
     )
   }
-  lines.push('')
-  lines.push(ansis.bold('第三方工具检测'))
-  lines.push('-'.repeat(40))
-  for (const tool of report.toolDetection) {
-    const mark = tool.installed ? ansis.green('✓') : ansis.red('✗')
-    const integ = tool.codebuddyIntegrated ? '已集成' : '未集成'
-    lines.push(
-      `  ${mark} ${tool.name.padEnd(12)} ${tool.installed ? integ : '未安装'}  (${tool.recommendedSaving})`,
-    )
+  const installedTools = report.toolDetection.filter((t) => t.installed)
+  if (installedTools.length > 0) {
+    lines.push('')
+    lines.push(ansis.bold('第三方工具检测'))
+    lines.push('-'.repeat(40))
+    for (const tool of installedTools) {
+      const enabledText = tool.enabled ? ansis.green('已启用') : ansis.yellow('未启用')
+      lines.push(
+        `  ${ansis.green('✓')} ${tool.name.padEnd(12)} ${enabledText}  (${tool.recommendedSaving})`,
+      )
+    }
   }
   if (report.warnings.length > 0) {
     lines.push('')
@@ -322,15 +324,16 @@ function renderDiagnosisMarkdown(report: DiagnosisReport): string {
       `| ${cfg.path} | ${cfg.sizeBytes}B | ${cfg.lineCount} | ${cfg.estimatedTokens} | ${cfg.impactLevel} |`,
     )
   }
-  lines.push('')
-  lines.push('## 第三方工具检测')
-  lines.push('')
-  lines.push('| 工具 | 已安装 | 已集成 | 推荐节省 |')
-  lines.push('| --- | --- | --- | --- |')
-  for (const tool of report.toolDetection) {
-    lines.push(
-      `| ${tool.name} | ${tool.installed ? '✓' : '✗'} | ${tool.codebuddyIntegrated} | ${tool.recommendedSaving} |`,
-    )
+  const installedMdTools = report.toolDetection.filter((t) => t.installed)
+  if (installedMdTools.length > 0) {
+    lines.push('')
+    lines.push('## 第三方工具检测')
+    lines.push('')
+    lines.push('| 工具 | 已安装 | 已启用 | 推荐节省 |')
+    lines.push('| --- | --- | --- | --- |')
+    for (const tool of installedMdTools) {
+      lines.push(`| ${tool.name} | ✓ | ${tool.enabled} | ${tool.recommendedSaving} |`)
+    }
   }
   if (report.warnings.length > 0) {
     lines.push('')

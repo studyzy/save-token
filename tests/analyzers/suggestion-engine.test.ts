@@ -32,6 +32,7 @@ const notInstalledTools: ToolDetection[] = [
   {
     name: 'rtk',
     installed: false,
+    enabled: false,
     version: null,
     installPath: null,
     codebuddyIntegrated: false,
@@ -40,6 +41,7 @@ const notInstalledTools: ToolDetection[] = [
   {
     name: 'caveman',
     installed: false,
+    enabled: false,
     version: null,
     installPath: null,
     codebuddyIntegrated: false,
@@ -48,6 +50,7 @@ const notInstalledTools: ToolDetection[] = [
   {
     name: 'headroom',
     installed: false,
+    enabled: false,
     version: null,
     installPath: null,
     codebuddyIntegrated: false,
@@ -56,6 +59,7 @@ const notInstalledTools: ToolDetection[] = [
   {
     name: 'lean-ctx',
     installed: false,
+    enabled: false,
     version: null,
     installPath: null,
     codebuddyIntegrated: false,
@@ -64,6 +68,7 @@ const notInstalledTools: ToolDetection[] = [
   {
     name: 'graphify',
     installed: false,
+    enabled: false,
     version: null,
     installPath: null,
     codebuddyIntegrated: false,
