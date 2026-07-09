@@ -1,0 +1,14 @@
+{
+  "name": "save-token",
+  "version": "1.0.0",
+  "description": "CodeBuddy Token 占用诊断与优化工具。诊断 MCP/Skill/Plugin/Rules 的 Token 消耗，生成优化建议，一键应用优化。",
+  "author": {
+    "name": "studyzy"
+  },
+  "homepage": "https://github.com/studyzy/save-token",
+  "repository": "https://github.com/studyzy/save-token",
+  "keywords": ["token", "optimization", "diagnostic", "codebuddy"],
+  "category": "开发工具",
+  "compatibility": "需要 st CLI 工具。安装: npm install -g save-token",
+  "skills": ["st-diagnose", "st-analyze", "st-optimize"]
+}

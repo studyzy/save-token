@@ -31,13 +31,35 @@ st optimize --apply
 
 ## 命令
 
-| 命令 | 用途 |
-| --- | --- |
-| `st diagnose` | 扫描 CodeBuddy 环境 |
-| `st analyze` | 生成优化建议 |
+| 命令                    | 用途                     |
+| ----------------------- | ------------------------ |
+| `st diagnose`           | 扫描 CodeBuddy 环境      |
+| `st analyze`            | 生成优化建议             |
 | `st optimize [--apply]` | 执行优化（dry-run 默认） |
-| `st rollback` | 从备份恢复 |
-| `st report` | 导出报告 |
+| `st rollback`           | 从备份恢复               |
+| `st report`             | 导出报告                 |
+
+## CodeBuddy Plugin 使用
+
+save-token 提供 CodeBuddy Plugin，安装后可在对话中通过自然语言使用：
+
+```bash
+# 本地开发测试
+codebuddy --plugin-dir /path/to/save-token
+
+# 从市场安装（未来）
+/plugin install save-token
+```
+
+安装后，三个 Skill 自动可用：
+
+| Skill       | 触发方式                  | 功能                             |
+| ----------- | ------------------------- | -------------------------------- |
+| st-diagnose | "帮我诊断 token 占用"     | 诊断 Token 占用，展示结构化报告  |
+| st-analyze  | "分析我的 token 优化空间" | 收集使用场景，生成个性化优化建议 |
+| st-optimize | "应用这些优化"            | 执行优化操作，安装工具/修改配置  |
+
+也可手动调用：`/save-token:diagnose`、`/save-token:analyze`、`/save-token:optimize`
 
 ## 输出格式
 
