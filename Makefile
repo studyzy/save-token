@@ -45,16 +45,16 @@ install-local: build
 # === st CLI 命令 ===
 
 diagnose:
-	pnpm dev diagnose
+	ST_DEBUG=1 pnpm dev diagnose
 
 analyze:
-	pnpm dev analyze
+	ST_DEBUG=1 pnpm dev analyze
 
 optimize:
-	pnpm dev optimize
+	ST_DEBUG=1 pnpm dev optimize
 
 optimize-apply:
-	pnpm dev optimize --apply
+	ST_DEBUG=1 pnpm dev optimize --apply
 
 rollback:
 	pnpm dev rollback

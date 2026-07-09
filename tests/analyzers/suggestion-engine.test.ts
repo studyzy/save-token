@@ -24,6 +24,13 @@ function makeReport(overrides: Partial<DiagnosisReport> = {}): DiagnosisReport {
     headlessAvailable: false,
     dataSource: 'headless',
     warnings: [],
+    scenario: 'general',
+    projectProfile: {
+      codeFileCount: 0,
+      docFileCount: 0,
+      isLargeCodebase: false,
+      hasLargeDocs: false,
+    },
     ...overrides,
   }
 }

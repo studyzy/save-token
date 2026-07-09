@@ -22,6 +22,13 @@ const sampleReport: DiagnosisReport = {
   headlessAvailable: false,
   dataSource: 'headless',
   warnings: [],
+  scenario: 'general',
+  projectProfile: {
+    codeFileCount: 0,
+    docFileCount: 0,
+    isLargeCodebase: false,
+    hasLargeDocs: false,
+  },
 }
 
 const sampleSuggestion: OptimizationSuggestion = {

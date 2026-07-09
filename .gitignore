@@ -32,3 +32,4 @@ yarn.lock
 
 # Diagnose resource output
 save-token-resource/
+graphify-out/

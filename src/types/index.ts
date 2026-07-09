@@ -9,6 +9,15 @@ export type OutputFormat = 'terminal' | 'json' | 'md'
 
 export type ToolId = 'rtk' | 'caveman' | 'headroom' | 'lean-ctx' | 'graphify' | 'ponytail'
 
+export type UsageScenario = 'coding' | 'docs' | 'general'
+
+export interface ProjectProfile {
+  codeFileCount: number
+  docFileCount: number
+  isLargeCodebase: boolean
+  hasLargeDocs: boolean
+}
+
 export type SuggestionType = 'install_tool' | 'config_change' | 'habit_suggestion'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
@@ -142,6 +151,8 @@ export interface DiagnosisReport {
   headlessAvailable: boolean
   dataSource: DataSource
   warnings: string[]
+  scenario: UsageScenario
+  projectProfile: ProjectProfile
   /** Only populated when dataSource is 'proxy'. Contains parsed proxy details. */
   proxyDetails?: {
     model: string

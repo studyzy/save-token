@@ -41,6 +41,13 @@ const SAMPLE_REPORT = {
   headlessAvailable: false,
   dataSource: 'fs-only' as const,
   warnings: [],
+  scenario: 'general' as const,
+  projectProfile: {
+    codeFileCount: 0,
+    docFileCount: 0,
+    isLargeCodebase: false,
+    hasLargeDocs: false,
+  },
 }
 
 describe('backup-manager', () => {

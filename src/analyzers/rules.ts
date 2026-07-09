@@ -2,7 +2,7 @@
  * Rule data and mappings for suggestion generation.
  * Tool install commands are sourced from blog.md chapter 4.
  */
-import type { ToolId } from '../types'
+import type { ToolId, UsageScenario } from '../types'
 
 export interface ToolInstallSpec {
   id: ToolId
@@ -83,3 +83,29 @@ export const THRESHOLDS = {
   HISTORY_BYTES_WARN: 50 * 1024 * 1024,
   MCP_DEFER_TOOLS_THRESHOLD: 3,
 } as const
+
+/** Tools recommended per scenario. RTK/Headroom/Lean-ctx are universal. */
+export const SCENARIO_TOOL_MAP: Record<UsageScenario, ToolId[]> = {
+  coding: ['rtk', 'caveman', 'headroom', 'lean-ctx', 'ponytail'],
+  docs: ['rtk', 'headroom', 'lean-ctx'],
+  general: ['rtk', 'caveman', 'headroom', 'lean-ctx', 'ponytail'],
+}
+
+/** Code knowledge-base MCP recommendations (large codebase projects). */
+export const CODE_KNOWLEDGE_MCPS = [
+  {
+    name: 'Codebase-memory-mcp',
+    description: '代码库知识图谱 MCP，提供结构化代码查询',
+    installCommand: 'npx @anthropic-ai/codebase-memory-mcp',
+  },
+  {
+    name: 'GitNexus',
+    description: 'Git 仓库代码知识管理工具',
+    installCommand: 'brew install gitnexus && gitnexus init',
+  },
+  {
+    name: 'CodeGraph',
+    description: '代码图谱生成和查询工具',
+    installCommand: 'npm install -g codegraph && codegraph init',
+  },
+]

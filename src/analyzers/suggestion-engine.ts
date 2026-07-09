@@ -1,15 +1,42 @@
-import type { DiagnosisReport, OptimizationSuggestion, ToolId } from '../types'
+import type {
+  DiagnosisReport,
+  OptimizationSuggestion,
+  ProjectProfile,
+  ToolId,
+  UsageScenario,
+} from '../types'
 import type { ToolInstallResult } from '../types'
-import { TOOL_SAVINGS, TOOL_REASONS } from '../analyzers/rules'
+import {
+  TOOL_SAVINGS,
+  TOOL_REASONS,
+  SCENARIO_TOOL_MAP,
+  CODE_KNOWLEDGE_MCPS,
+} from '../analyzers/rules'
 import { readFile, exists } from '../utils/fs-operations'
 import { estimate } from '../collectors/token-estimator'
 
-export function generateSuggestions(report: DiagnosisReport): OptimizationSuggestion[] {
+export function generateSuggestions(
+  report: DiagnosisReport,
+  scenario: UsageScenario = 'general',
+  profile: ProjectProfile = {
+    codeFileCount: 0,
+    docFileCount: 0,
+    isLargeCodebase: false,
+    hasLargeDocs: false,
+  },
+): OptimizationSuggestion[] {
   const suggestions: OptimizationSuggestion[] = []
   const total = report.contextOverview.totalEstimatedTokens || 1
+  const recommendedTools = new Set<ToolId>(SCENARIO_TOOL_MAP[scenario])
 
+  // Graphify: recommended only for large codebases (coding/general)
+  if (profile.isLargeCodebase && scenario !== 'docs') {
+    recommendedTools.add('graphify')
+  }
+
+  // Tool installation suggestions — filtered by scenario
   for (const tool of report.toolDetection) {
-    if (!tool.installed) {
+    if (!tool.installed && recommendedTools.has(tool.name)) {
       suggestions.push({
         id: `install-${tool.name}`,
         type: 'install_tool',
@@ -30,6 +57,28 @@ export function generateSuggestions(report: DiagnosisReport): OptimizationSugges
     }
   }
 
+  // Code knowledge-base MCP: recommended for large codebase + large docs
+  if (profile.isLargeCodebase && profile.hasLargeDocs && scenario !== 'docs') {
+    const mcpNames = CODE_KNOWLEDGE_MCPS.map((m) => m.name).join(' / ')
+    const installCmds = CODE_KNOWLEDGE_MCPS.map((m) => m.installCommand).join('; ')
+    suggestions.push({
+      id: 'install-code-knowledge-mcp',
+      type: 'habit_suggestion',
+      wasteCategory: 'structural',
+      target: mcpNames,
+      reason: `大代码量+大量文档项目，建议安装代码知识库 MCP 减少盲搜 Token（${mcpNames}）`,
+      estimatedSavingTokens: 5000,
+      estimatedSavingPercent: (5000 / total) * 100,
+      risk: 'low',
+      reversible: true,
+      actionType: 'install_rtk', // placeholder — habit suggestion
+      actionPayload: {
+        installCommand: installCmds,
+      },
+    })
+  }
+
+  // MCP: CLI alternatives
   for (const mcp of report.mcpList) {
     if (mcp.status !== 'enabled') continue
     if (mcp.hasCliAlternative) {
@@ -87,28 +136,8 @@ export function generateSuggestions(report: DiagnosisReport): OptimizationSugges
     })
   }
 
-  for (const plugin of report.pluginList) {
-    if (plugin.enabled && plugin.isLowFrequency) {
-      suggestions.push({
-        id: `disable-plugin-${plugin.id}`,
-        type: 'config_change',
-        wasteCategory: 'structural',
-        target: plugin.id,
-        reason: `低频插件 ${plugin.id}，编码场景建议禁用`,
-        estimatedSavingTokens: 500,
-        estimatedSavingPercent: (500 / total) * 100,
-        risk: 'low',
-        reversible: true,
-        actionType: 'disable_plugin',
-        actionPayload: {
-          targetFile: '~/.codebuddy/settings.json',
-          operation: 'set-field',
-          fieldName: `enabledPlugins.${plugin.id}`,
-          fieldValue: false,
-        },
-      })
-    }
-  }
+  // Skill/Plugin removal suggestions are now handled by LLM (callLlmForRemovalAdvice).
+  // Keep only structural warnings that are not scenario-dependent.
 
   if (report.skillList.length > 10) {
     suggestions.push({
@@ -239,14 +268,12 @@ function getConfigCommand(tool: ToolId): string {
 }
 
 // ── Cache instability detection ──────────────────────────────────────────
-// Based on token-optimizer's cache_instability.py detector.
-// Patterns in the first 60% of CODEBUDDY.md that break Anthropic prefix caching.
 
 const TIMESTAMP_PATTERNS = [
-  /\d{4}-\d{2}-\d{2}/, // ISO dates
-  /(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\w+\s+\d{1,2}/, // "Mon Jan 1"
-  /^(Updated|Last\s+(updated|modified|synced)):/im, // "Updated:" / "Last modified:"
-  /^As\s+\d{4}-\d{2}/im, // "As 2026-07"
+  /\d{4}-\d{2}-\d{2}/,
+  /(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\w+\s+\d{1,2}/,
+  /^(Updated|Last\s+(updated|modified|synced)):/im,
+  /^As\s+\d{4}-\d{2}/im,
 ] as const
 
 const DYNAMIC_SECTION_MARKERS = [
@@ -266,11 +293,9 @@ function detectCacheInstability(
 ): OptimizationSuggestion[] {
   const suggestions: OptimizationSuggestion[] = []
   const lines = content.split('\n')
-  // Only the first 60% of lines matter for prefix cache stability
   const cutoff = Math.max(1, Math.floor(lines.length * 0.6))
   const prefix = lines.slice(0, cutoff).join('\n')
 
-  // Signal 1: timestamps in the prefix region
   for (const pattern of TIMESTAMP_PATTERNS) {
     const m = pattern.exec(prefix)
     if (m) {
@@ -291,11 +316,10 @@ function detectCacheInstability(
           actionPayload: {},
         })
       }
-      break // One timestamp finding is enough
+      break
     }
   }
 
-  // Signal 2: auto-generated section markers in the prefix
   for (const pattern of DYNAMIC_SECTION_MARKERS) {
     const m = pattern.exec(prefix)
     if (m) {
@@ -320,7 +344,6 @@ function detectCacheInstability(
     }
   }
 
-  // Signal 3: @import of volatile files in the prefix
   const importPattern = /@import\s+"([^"]+)"/g
   let importMatch: RegExpExecArray | null
   while ((importMatch = importPattern.exec(prefix)) !== null) {
@@ -339,7 +362,7 @@ function detectCacheInstability(
         actionType: 'simplify_codebuddy_md',
         actionPayload: {},
       })
-      break // One volatile import finding is enough
+      break
     }
   }
 

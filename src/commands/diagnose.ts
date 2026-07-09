@@ -19,13 +19,17 @@ import {
   SKILL_LIST_PROMPT,
   SKILL_LIST_SCHEMA,
 } from '../utils/prompt-templates'
-import { commandExists, getPlatform } from '../utils/platform'
+import { commandExists, getPlatform, isProcessRunning } from '../utils/platform'
+import path from 'node:path'
 import { exec } from 'tinyexec'
 import { printDiagnosisReport } from '../utils/output'
-import { writeFile } from '../utils/fs-operations'
+import { writeFile, exists } from '../utils/fs-operations'
 import { handleExitPromptError, handleGeneralError } from '../utils/error-handler'
 import { writeResource } from '../utils/resource-dir'
 import { i18n } from '../i18n'
+import { createLogger } from '../utils/debug-logger'
+
+const log = createLogger('diagnose')
 
 interface HeadlessMcpItem {
   name: string
@@ -67,6 +71,7 @@ export async function runDiagnose(
   adapter: CodeBuddyAdapter,
   options: DiagnoseOptions,
 ): Promise<DiagnoseResult> {
+  log('Starting diagnosis, noHeadless=%s', options.noHeadless ?? false)
   const warnings: string[] = []
   const platform = getPlatform()
 
@@ -80,12 +85,19 @@ export async function runDiagnose(
     warnings.push(i18n.t('errors:codebuddyNotFound'))
   } else {
     codebuddyVersion = await getCodebuddyVersion()
+    log('codebuddy detected, version=%s', codebuddyVersion)
     if (!options.noHeadless) {
       headlessAvailable = true
     }
   }
 
   const fs = scanFilesystem(adapter)
+  log(
+    'FS scan done, mcp=%d skills=%d plugins=%d',
+    fs.mcpList.length,
+    fs.skillList.length,
+    fs.pluginList.length,
+  )
   writeResource('fs-collect.json', fs)
 
   let mcpList = fs.mcpList
@@ -93,8 +105,16 @@ export async function runDiagnose(
 
   // Priority 1: Proxy mode — intercept real API request
   if (headlessAvailable && !options.noHeadless) {
+    log('Starting proxy diagnosis')
     const proxyResult = await runProxyDiagnose(adapter)
     if (proxyResult.ok && proxyResult.parsed) {
+      log(
+        'Proxy OK: model=%s, totalTokens=%d, tools=%d builtin + %d mcp',
+        proxyResult.parsed.model,
+        proxyResult.parsed.totalEstimatedTokens,
+        proxyResult.parsed.builtinToolCount,
+        proxyResult.parsed.mcpToolCount,
+      )
       dataSource = 'proxy'
       rawBody = proxyResult.rawBody
       writeResource('proxy-raw-body.json', proxyResult.rawBody)
@@ -183,6 +203,13 @@ export async function runDiagnose(
         headlessAvailable,
         dataSource,
         warnings,
+        scenario: 'general',
+        projectProfile: {
+          codeFileCount: 0,
+          docFileCount: 0,
+          isLargeCodebase: false,
+          hasLargeDocs: false,
+        },
         proxyDetails: {
           model: proxyResult.parsed.model,
           toolDefinitions: proxyResult.parsed.toolDefinitions,
@@ -195,20 +222,33 @@ export async function runDiagnose(
 
       return { report, rawBody }
     }
+    log('Proxy failed, falling back to headless')
     // Proxy failed, fall through to headless
   }
 
   // Priority 2: Headless mode — probe via codebuddy -p
   if (headlessAvailable && !options.noHeadless) {
+    log('Starting headless probes')
     dataSource = 'headless'
     const [mcpProbe, skillProbe] = await Promise.all([
       probe(adapter, MCP_LIST_PROMPT, MCP_LIST_SCHEMA),
       probe(adapter, SKILL_LIST_PROMPT, SKILL_LIST_SCHEMA),
     ])
+    log(
+      'Headless MCP probe: ok=%s, items=%d',
+      mcpProbe.ok,
+      (mcpProbe.parsed as unknown[] | undefined)?.length ?? 0,
+    )
+    log(
+      'Headless Skill probe: ok=%s, items=%d',
+      skillProbe.ok,
+      (skillProbe.parsed as unknown[] | undefined)?.length ?? 0,
+    )
     writeResource('headless-mcp.json', mcpProbe)
     writeResource('headless-skill.json', skillProbe)
     if (!mcpProbe.ok) {
       warnings.push(i18n.t('errors:headlessFailed'))
+      log('Headless probe failed, falling back to fs-only')
       headlessAvailable = false
       dataSource = 'fs-only'
     } else {
@@ -223,6 +263,12 @@ export async function runDiagnose(
 
   const contextOverview = buildContextOverview(fs, mcpList, skillList)
   const toolDetection = await detectTools(fs)
+
+  log(
+    'Diagnosis complete, dataSource=%s, totalTokens=%d',
+    dataSource,
+    contextOverview.totalEstimatedTokens,
+  )
 
   const report: DiagnosisReport = {
     scanTimestamp: new Date().toISOString(),
@@ -239,6 +285,13 @@ export async function runDiagnose(
     headlessAvailable,
     dataSource,
     warnings,
+    scenario: 'general',
+    projectProfile: {
+      codeFileCount: 0,
+      docFileCount: 0,
+      isLargeCodebase: false,
+      hasLargeDocs: false,
+    },
   }
   writeResource('diagnosis-report.json', report)
 
@@ -455,18 +508,28 @@ async function detectTools(
       const plugin = fs.pluginList.find((p) => p.pluginId === t.id)
       const hasMarketplaceDir = await checkPluginMarketplaceDir(t.id)
       const hasEnabledEntry = !!plugin?.enabled
-      installed = hasMarketplaceDir || hasEnabledEntry
-      if (!installed && proxyParsed) {
-        installed = proxyDetectPlugin(t.id, proxyParsed)
-      }
+      const hasProxyMarker = proxyPlugins.includes(t.id)
+      installed = hasMarketplaceDir || hasEnabledEntry || hasProxyMarker
       codebuddyIntegrated = installed
-      // Plugin enabled if installed (CodeBuddy loads all installed plugins)
-      // Proxy-detected plugins take priority when available
-      enabled = installed && (proxyPlugins.includes(t.id) || !proxyParsed)
+      // Plugins are enabled once installed (CodeBuddy loads all installed plugins).
+      // Proxy marker only contributes to installed detection above.
+      enabled = installed
     } else {
       installed = await commandExists(t.id)
       codebuddyIntegrated = installed
-      enabled = installed && t.id === 'rtk' ? isRtkEnabled : false
+      if (t.id === 'rtk') {
+        enabled = installed && isRtkEnabled
+      } else if (t.id === 'graphify') {
+        enabled = installed && exists(path.join(process.cwd(), 'graphify-out'))
+      } else if (t.id === 'headroom') {
+        const mcpEnabledFs = fs.mcpList.some((m) => m.name === 'headroom' && m.status === 'enabled')
+        const mcpEnabledProxy = !!proxyParsed?.mcpReferences.some((r) => r === 'mcp__headroom')
+        const mcpEnabled = mcpEnabledFs || mcpEnabledProxy
+        const processRunning = await isProcessRunning('headroom')
+        enabled = installed && mcpEnabled && processRunning
+      } else {
+        enabled = false
+      }
     }
 
     results.push({
@@ -486,20 +549,4 @@ async function detectTools(
 async function checkPluginMarketplaceDir(pluginId: string): Promise<boolean> {
   const { exists: fileExists } = await import('../utils/fs-operations')
   return fileExists(`${process.env.HOME}/.codebuddy/plugins/marketplaces/${pluginId}/`)
-}
-
-/**
- * Detect plugin activation from proxy-captured request body.
- * Scans all message content for mode-active markers (e.g. "PONYTAIL MODE ACTIVE").
- */
-function proxyDetectPlugin(pluginId: string, parsed: ProxyDiagnosisData): boolean {
-  const markers: Record<string, string> = {
-    ponytail: 'PONYTAIL MODE ACTIVE',
-  }
-  const marker = markers[pluginId]
-  if (!marker) return false
-  for (const block of parsed.messageBreakdown) {
-    if (block.snippet.includes(marker)) return true
-  }
-  return false
 }

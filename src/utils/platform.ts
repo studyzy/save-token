@@ -119,6 +119,21 @@ export function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || '~'
 }
 
+/** Check whether a process matching the given name is running. Cross-platform. */
+export async function isProcessRunning(name: string): Promise<boolean> {
+  try {
+    if (getPlatform() === 'windows') {
+      const res = await exec('tasklist', ['/FI', `IMAGENAME eq ${name}.exe`, '/NH'])
+      return res.exitCode === 0 && res.stdout.toLowerCase().includes(name.toLowerCase())
+    }
+    // Unix: pgrep default excludes itself; -f matches full command line.
+    const res = await exec('pgrep', ['-f', name])
+    return res.exitCode === 0 && res.stdout.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
 export function getCodebuddyDir(): string {
   return `${getHomeDir()}/.codebuddy`
 }

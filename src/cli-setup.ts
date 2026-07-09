@@ -9,6 +9,19 @@ import { report } from './commands/report'
 import { trace } from './commands/trace'
 
 export async function setupCommands(cli: CAC): Promise<void> {
+  // Enable debug logging: ST_DEBUG=1 or DEBUG=st:* or --debug flag
+  if (process.env.ST_DEBUG === '1' && !process.env.DEBUG) {
+    process.env.DEBUG = 'st:*'
+  }
+  if (process.argv.includes('--debug')) {
+    process.env.DEBUG = 'st:*'
+  }
+  if (process.env.DEBUG) {
+    // dynamic import: debug module lazy-loads enable function
+    const debug = await import('debug')
+    debug.default.enable(process.env.DEBUG)
+  }
+
   const lang = (process.env.ST_LANG as 'zh-CN' | 'en' | undefined) ?? 'zh-CN'
   await initI18n(lang)
 

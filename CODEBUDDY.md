@@ -89,6 +89,7 @@ npx vitest run -t "test name"                    # 按名称筛选运行单个�
 - `src/utils/platform.ts` — 平台检测（windows/macos/linux/Termux）、`commandExists()`、`getCodebuddyDir()` 等
 - `src/utils/fs-operations.ts` — 同步文件操作封装（read/write/copy/remove/ensureDir），所有操作包裹 `FileSystemError`
 - `src/utils/output.ts` — 格式化输出：`printDiagnosisReport()`、`printOptimizePreview()`、`printSuggestions()`，支持 terminal/json/md 三种格式
+- `src/utils/debug-logger.ts` — 基于 `debug` 库的调试日志，输出到 `save-token-resource/debug.log`
 - `src/utils/error-handler.ts` — `handleExitPromptError()` 和 `handleGeneralError()` 统一错误处理
 - `src/utils/prompt-templates.ts` — `codebuddy -p` 探针的中文 prompt 模板和 JSON Schema（MCP 列表、Skill 列表、上下文占用、工具列表）
 
@@ -111,3 +112,4 @@ npx vitest run -t "test name"                    # 按名称筛选运行单个�
 - **优化前备份**：所有 `st optimize --apply` 操作在执行前会自动备份被修改的配置文件
 - **路径别名**：`@` → `./src`（vitest.config.ts 和测试中使用）
 - **settings.json 不计入 Token**：settings.json 是 CodeBuddy 自消费配置，不发送给 LLM API
+- **Debug 日志**：通过 `debug` 库实现。设置 `ST_DEBUG=1` 或 `DEBUG=st:*` 或在命令后加 `--debug` 开启。日志写入 `save-token-resource/debug.log`。代码中使用 `import { createLogger } from '../utils/debug-logger'` 创建带命名空间的 logger
