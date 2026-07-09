@@ -1,26 +1,24 @@
 ---
 name: st-analyze
 description: 'Token 优化分析。当用户想要优化建议、分析 Token 浪费、了解如何减少 Token 占用、获取个性化优化方案时使用。'
-allowed-tools: Read, Write, Bash, AskUserQuestion
+allowed-tools: Read, Write, Bash, AskUserQuestion, Agent
 ---
 
 # st-analyze: Token 优化分析
 
-收集用户的使用场景和项目上下文，结合 `st diagnose` 诊断数据，生成个性化的 Token 优化建议��
+收集用户的使用场景和项目上下文，结合 `st diagnose` 诊断数据，通过 6 个并行子 Agent 多维度分析，
+生成个性化的 Token 优化方案，输出 OpenSpec 风格的 `tasks.md` 待办清单。
 
 ## 工作流
 
 ### 步骤 1: 检查诊断数据是否可用
 
-首先尝试读取已有的诊断结果文件：
-
 ```bash
 cat save-token-resource/diagnosis-report.json 2>/dev/null || echo "NOT_FOUND"
 ```
 
-**如果文件存在**且 `scanTimestamp` 在 5 分钟内：复用诊断结果，跳到步骤 3。
-
-**如果文件不存在或已过期**：执行诊断：
+**文件存在**且 `scanTimestamp` 在 5 分钟内 → 复用，跳到步骤 3。
+**不存在或过期** → 执行诊断：
 
 ```bash
 st diagnose --format json --report save-token-resource/diagnosis-report.json
@@ -28,125 +26,174 @@ st diagnose --format json --report save-token-resource/diagnosis-report.json
 
 ### 步骤 2: 收集使用场景信息
 
-使用 `AskUserQuestion` 工具向用户收集以下信息。**不要猜测，必须询问用户**。
+使用 `AskUserQuestion` 收集（不要猜测，必须询问）：
 
-**问题 1: 主要使用场景**
+- **问题 1: 主要使用场景** — 日常编码 / 代码审查 / 架构设计 / 全栈开发 / 通用
+- **问题 2: 项目类型** — 前端 / 后端 / 全栈 / 工具库 / 其他
+- **问题 3: 技术栈**（可选，允许跳过）— 自由文本如 "React + Node.js"
 
-```
-请选择您最常使用 CodeBuddy 的场景：
-```
+用户跳过 → 使用通用分析模式。
 
-选项：
+### 步骤 3: 并行启动 6 个子 Agent 分析
 
-- 日常编码（编写功能代码、修 Bug）
-- 代码审查（Review PR、检查代码质量）
-- 架构设计（系统设计、技术方案讨论）
-- 全栈开发（前后端都涉及）
-- 通用（没有特定场景）
+使用 `Agent` tool **并行**启动以下 6 个分析子 Agent。每个传入完整上下文：
+`diagnosis-report.json` 全文 + 场景 + 项目类型 + 技术栈。
 
-**问题 2: 项目类型**
+**所有子 Agent 必须严格输出以下统一 JSON 格式**（不要任何额外文字）：
 
-```
-您当前项目的类型是？
-```
-
-选项：
-
-- 前端（Web/移动端 UI 开发）
-- 后端（API 服务、数据处理）
-- 全栈（前后端都涉及）
-- 工具/库（CLI 工具、SDK、框架）
-- 其他
-
-**问题 3: 技术栈**（可选，允许跳过）
-
-```
-您当前项目使用的主要技术栈是什么？（可选，可跳过）
+```json
+{
+  "agent": "<agent 标识>",
+  "suggestions": [
+    {
+      "id": "string",
+      "category": "tool-enable|cleanup|model-opt|defer-tools|knowledge-base|mcp-defer",
+      "target": "string",
+      "action": "string",
+      "reason": "string",
+      "estimatedSavingTokens": 0,
+      "risk": "low|medium|high",
+      "reversible": true
+    }
+  ]
+}
 ```
 
-允许用户自由文本输入，如 "React + Node.js"、"Go + gRPC"、"Python + FastAPI" 等。
+### 步骤 4: 汇总生成 tasks.md
 
-**如果用户跳过场景收集**：使用通用分析模式，不针对特定场景优化建议排序。
-
-### 步骤 3: 读取诊断数据并生成建议
-
-读取诊断 JSON 文件：
-
-```bash
-cat save-token-resource/diagnosis-report.json
-```
-
-结合收集到的场景信息，分析诊断数据并生成个性化优化建议：
-
-1. **工具安装建议**: 检查 `toolDetection[]`，对未安装的工具根据场景推荐：
-   - **全栈/后端开发**（MCP 多）: 优先推荐 `rtk`（Token 过滤，节省 40-60%）
-   - **代码审查**: 优先推荐 `caveman`（压缩输出，节省 ~75%）
-   - **通用**: 推荐 `headroom`（上下文压缩）+ `lean-ctx`（精简上下文）
-
-2. **MCP 优化建议**: 检查 `mcpList[]`：
-   - MCP 数量 > 5: 建议禁用低频 MCP
-   - 有 `hasCliAlternative` 标记的 MCP: 建议用 CLI 替代
-   - 未设置 `deferLoading` 的 MCP: 建议开启延迟加载
-
-3. **Skill 优化建议**: 检查 `skillList[]`：
-   - 有 `duplicateSource` 标记的 Skill: 建议去重
-   - Skill 数量 > 10: 建议检查是否有不使用 Skill
-
-4. **配置文件优化建议**: 检查 `configFiles[]`：
-   - CODEBUDDY.md > 200 行: 建议精简
-   - 历史文件 > 50MB: 建议清理
-
-5. **场景特定建议**: 根据用户场景调整优先级：
-   - 日常编码: 优先保证常用 MCP 可用，谨慎禁用
-   - 代码审查: 优先启用 caveman 等输出压缩工具
-   - 架构设计: 可能需要更多 Skill 支持，仅优化 MCP
-
-### 步骤 4: 格式化呈现
-
-按 Token 节省量从高到低排序展示建议：
+合并 6 个子 Agent 的 `suggestions`，按 `category` 分组，写入：
 
 ```
-## Token 优化分析
-
-**使用场景**: 全栈开发
-**项目类型**: 全栈
-**当前 Token 占用**: 31,200 tokens
-
-### 优化建议（按节省量排序）
-
-| # | 建议 | 类型 | 预计节省 | 风险 |
-|---|------|------|----------|------|
-| 1 | 安装 rtk - Token 过滤代理 | 安装工具 | ~15,000 tokens (48%) | 低 |
-| 2 | 禁用 MCP tdesign - 低频使用 | 配置修改 | ~1,600 tokens (5%) | 低 |
-| 3 | 开启 MCP defer_loading - 减少初始 Token | 配置修改 | ~3,000 tokens (10%) | 低 |
-| 4 | 精简 CODEBUDDY.md - 当前 350 行 | 配置修改 | ~1,500 tokens (5%) | 低 |
-
-**总预计节省**: ~21,100 tokens (68%)
-
-### 场景分析
-
-作为全栈开发者，您需要多种 MCP 工具。建议保留常用的后端/前端 MCP，禁用低频工具。
-rtk 是最重要的优化——它可以在发送给 LLM 前过滤掉不必要的 Token，节省约 48%。
-
-如需应用这些优化，请说"应用优化"。
+openspec/changes/<scenario>-advice/tasks.md
 ```
 
-### 无需优化的情况
+其中 `<scenario>` 为 `coding` / `docs` / `general` 之一（对应步骤 2 的答案）。
 
-如果诊断数据显示 Token 占用已在合理范围内（总占用 < 15,000 tokens，MCP < 5 个，CODEBUDDY.md < 200 行，无工具可安装）：
+格式见下方「tasks.md 输出格式」。
 
+### 步骤 5: 输出摘要
+
+控制台打印分组摘要（`## 1. 第三方工具启用` ... `## 6. MCP 延迟加载`）+ 总计节省 Token/百分比 + tasks.md 路径。
+
+---
+
+## 子 Agent 定义
+
+每个子 Agent 使用 `Agent(subagent_type="general-purpose", prompt="...")` 启动，prompt 包含对应提示词 + 完整上下文。
+
+### 子 Agent 1: 第三方工具启用分析 (tool-enable-agent)
+
+**提示词**：
+分析 `toolDetection[]` 数组。对每个 `installed === true && enabled === false` 的工具，生成启用建议。
+参考 `recommendedSaving` 字段评估节省量。重点工具：rtk（终端输出压缩）、caveman（AI 回复压缩）、
+headroom（上下文压缩）、ponytail（决策阶梯）、graphify（代码图谱）、lean-ctx（读取筛选）。
+
+**输入**：`toolDetection` + `scenario`
+**输出 category**：`tool-enable`
+**action 示例**：`启用 RTK（配置 PreToolUse Hook）`
+
+### 子 Agent 2: SKILL/Agent/MCP 精简 (cleanup-agent)
+
+**提示词**：
+分析 `skillList[]` / `agentList[]` / `mcpList[]`。结合 `scenario` 识别不必要的条目：
+
+- 与当前场景无关的 Skill（如代码开发场景下的演示/文档类 skill）
+- 重复或功能重叠的 Agent
+- 低频使用或未引用的 MCP（status=disabled 或 toolsCount 极小且长期未用）
+  对每个建议删除的条目，给出明确原因和预估节省 Token。
+
+**输入**：`skillList` + `agentList` + `mcpList` + `scenario`
+**输出 category**：`cleanup`
+**action 示例**：`删除 skill: presentation`、`禁用 mcp: tdesign`
+
+### 子 Agent 3: 模型优化 (model-opt-agent)
+
+**提示词**：
+分析 `skillList[]` / `agentList[]` / 可用 Commands。识别执行简单、重复性高的任务（如 lint 检查、格式修复、
+简单查询），建议在其 frontmatter 或配置中指定便宜模型（如 `model: lite`）。
+说明哪些任务不需要旗舰模型，切换后可显著降本。
+
+**输入**：`skillList` + `agentList` + `commands` + `projectProfile`
+**输出 category**：`model-opt`
+**action 示例**：`为 lint-check-fix 指定 model: lite`
+
+### 子 Agent 4: Agent Tools 明确化 (defer-tools-agent)
+
+**提示词**：
+分析 `agentList[]` 中每个 Agent 的 Tools 定义。若 Agent 未在 frontmatter/配置中明确声明 `tools`，
+或声明了过多 broad tools（如 `*`），建议明确最小必要 Tools 集合，并将其余工具配置为 `defer_loading`
+（延迟加载）。说明明确 Tools 可减少每次对话注入的工具定义 Token。
+
+**输入**：`agentList` + `hookList`
+**输出 category**：`defer-tools`
+**action 示例**：`为 code-reviewer 明确 tools: [Read, Grep, Bash]，其余 defer`
+
+### 子 Agent 5: 知识库推荐 (knowledge-base-agent)
+
+**提示词**：
+分析 `projectProfile`（代码文件数、文档文件数、是否大代码量）。当 `isLargeCodebase` 或 `hasLargeDocs` 为真时，
+推荐第三方知识库/记忆构建工具（如 Graphiti、Mem0、Zep、codebase-memory），
+帮助用户将项目知识沉淀为可检索的记忆，减少每次对话重新读取文件的 Token 消耗。
+
+**输入**：`projectProfile` + `scenario`
+**输出 category**：`knowledge-base`
+**action 示例**：`安装 Graphiti 知识库构建 MCP`
+
+### 子 Agent 6: MCP 延迟加载 (mcp-defer-agent)
+
+**提示词**：
+分析 `mcpList[]`。对每个 `status === "enabled" && deferLoading !== true` 的 MCP，生成延迟加载建议。
+说明延迟加载可减少会话初始化的工具定义 Token 注入，仅在首次调用时加载。
+
+**输入**：`mcpList`
+**输出 category**：`mcp-defer`
+**action 示例**：`配置 mcp: serena 延迟加载`
+
+---
+
+## tasks.md 输出格式
+
+```markdown
+# 优化建议：<scenario-label>
+
+## 1. 第三方工具启用
+
+- [ ] 启用 RTK（预估节省 ~8900 Token）
+      原因：rtk 已安装但未通过 Hook 启用，终端输出未压缩
+- [ ] 启用 Headroom（预估节省 ~6200 Token）
+      原因：headroom 已安装但 MCP 未注册
+
+## 2. SKILL/Agent/MCP 精简
+
+- [ ] 删除 skill: presentation（预估节省 ~300 Token）
+      原因：当前为代码开发场景，演示类 skill 无意义
+- [ ] 禁用 mcp: tdesign（预估节省 ~1600 Token）
+      原因：低频使用，可用 CLI 替代
+
+## 3. 模型优化
+
+- [ ] 为 lint-check-fix 指定 model: lite（预估节省 ~20% 成本）
+      原因：lint 检查为简单重复任务，无需旗舰模型
+
+## 4. Agent Tools 明确化
+
+- [ ] 为 code-reviewer 明确 tools 并 defer 其余（预估节省 ~2000 Token）
+      原因：当前声明 broad tools，每次对话注入过多工具定义
+
+## 5. 知识库推荐
+
+- [ ] 安装 Graphiti 知识库构建 MCP（预估节省 ~5000 Token/会话）
+      原因：项目代码量大，知识库可减少重复文件读取
+
+## 6. MCP 延迟加载
+
+- [ ] 配置 mcp: serena 延迟加载（预估节省 ~2000 Token）
+      原因：serena 工具数多，延迟加载减少初始化注入
+
+---
+
+总计：预估节省 ~XXXXX Token (XX.X%)
 ```
-## Token 优化分析
 
-**使用场景**: {场景}
-**当前 Token 占用**: {数值} tokens
-
-当前 Token 占用合理，无需优化。
-
-### 已就绪
-- MCP 工具数: {数量}（合理）
-- CODEBUDDY.md: {行数} 行（合理）
-- 省 Token 工具: {已安装列表}
-
-当前配置已适合您的使用场景。
-```
+每组标题固定为上述 6 个，顺序不变。每条建议一行 `- [ ]` 复选框 + 原因缩进两空格。
+总计行放在文件末尾，区别于 OpenSpec 的章节标题（用 `---` 分隔）。
